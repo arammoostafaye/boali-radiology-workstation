@@ -1,0 +1,10 @@
+{
+  "name": "boali-engine",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FastAPI wrapper around the real Boali radiology AI engines (ported verbatim from boali-radiology-suite). No fake data: engines report honest status.",
+  "scripts": {
+    "dev": "python3 -m uvicorn app:app --host 127.0.0.1 --port 3020 --reload",
+    "start": "python3 -m uvicorn app:app --host 127.0.0.1 --port 3020"
+  }
+}
