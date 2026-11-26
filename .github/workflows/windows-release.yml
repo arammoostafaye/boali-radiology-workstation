@@ -1,0 +1,61 @@
+name: Windows portable release
+
+# Builds the ready-to-run Windows package (all model weights pre-assembled,
+# no git required on the target machine) and attaches it to a GitHub Release.
+#
+# Why a workflow instead of uploading from a dev machine: the package is
+# ~1 GB. Building it on GitHub's own runners avoids flaky large uploads and
+# keeps the bytes server-side the whole time.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (contains all model weights / chunks)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Assemble the 417 MB TorchScript weights from repo chunks
+        run: python tools/assemble_weights.py
+
+      - name: Build the portable zip (weights pre-assembled, no chunks)
+        run: |
+          set -euxo pipefail
+          REF="${GITHUB_REF_NAME:-v1.0.0}"
+          NAME="Boali-Radiology-Workstation-${REF}-Windows-Portable"
+          # assembled weights already live in weights/ — drop the chunks to
+          # keep the package lean
+          rm -rf mini-services/boali-engine/weights/chunks
+          mkdir -p dist
+          STAGE_PARENT="$(mktemp -d)"
+          STAGE="${STAGE_PARENT}/${NAME}"
+          mkdir -p "${STAGE}"
+          rsync -a --exclude='.git' --exclude='.github' --exclude='dist' ./ "${STAGE}/"
+          ( cd "${STAGE_PARENT}" && zip -r -q -9 "${GITHUB_WORKSPACE}/dist/${NAME}.zip" "${NAME}" )
+          cd dist
+          sha256sum "${NAME}.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          ls -lh
+
+      - name: Attach package to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: .github/release-notes-v1.0.0.md
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
