@@ -88,3 +88,7 @@ mini-services/boali-engine/weights/lung_component_suppression.ts
 # against runtime/MANIFEST.txt). The assembled wheel is never committed.
 # (torchvision-*.whl does NOT match this pattern and stays tracked.)
 runtime/wheels/torch-*.whl
+# bundled runtimes extracted on first launch (the .zip sources stay tracked)
+runtime/python/
+runtime/node/
+runtime/tmp/

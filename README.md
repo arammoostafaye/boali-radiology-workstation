@@ -1,14 +1,14 @@
 # Boali Radiology Workstation
 
-**نسخه کامل و واقعی پلتفرم هوش مصنوعی تصویربرداری بیمارستان بوعلی** — رابط ورک‌استیشن مدرن (Next.js 16) + موتورهای استنتاج واقعی (FastAPI + PyTorch/ONNX) + آرشیو PACS امن‌شده. همه وزن‌های مدل‌ها **و** wheel ویندوزی torch و تمام وابستگی‌های پایتون داخل همین ریپو هستند — **هیچ فایل مدلی و نه torch هنگام اجرا دانلود نمی‌شود**.
+**نسخه کامل و واقعی پلتفرم هوش مصنوعی تصویربرداری بیمارستان بوعلی** — رابط ورک‌استیشن مدرن (Next.js 16) + موتورهای استنتاج واقعی (FastAPI + PyTorch/ONNX) + آرشیو PACS امن‌شده. ران‌تایم Python 3.12، ران‌تایم Node.js 22، همه وزن‌های مدل‌ها، تمام wheel های پایتون (شامل torch) و node_modules آمادهٔ ویندوز **همه داخل همین ریپو هستند** — **هیچ نصب پیش‌نیازی و هیچ دانلودی هنگام اجرا لازم نیست**.
 
-> **English:** Full-stack edition of the Boali Hospital radiology AI platform: a Next.js 16 workstation UI talking to real FastAPI inference engines (YOLOv8 ONNX fracture detection, Qure bone suppression, DenseNet-18 lung screen, ResNet-50 mammography, a 3D CT MPR/VR studio) plus a hardened PACS archive. **All model weights AND the Windows Python runtime (torch CPU + 28 more wheels) ship inside this repository** — nothing is downloaded at runtime. Windows one-click launcher included.
+> **English:** Full-stack edition of the Boali Hospital radiology AI platform: a Next.js 16 workstation UI talking to real FastAPI inference engines (YOLOv8 ONNX fracture detection, Qure bone suppression, DenseNet-18 lung screen, ResNet-50 mammography, a 3D CT MPR/VR studio) plus a hardened PACS archive. **The embedded Python 3.12 runtime, the Node.js 22 runtime, all model weights, every Windows Python wheel (torch CPU included) and a pre-built Windows node_modules all ship inside this repository** — no prerequisites, no downloads at runtime. Windows one-click launcher included.
 
 ---
 
 ## ⚡ اجرای سریع در ویندوز (یک کلیک)
 
-پیش‌نیاز (فقط بار اول): [Python **3.12 64-bit**](https://www.python.org/downloads/) (با این نسخه نصب پایتون کاملاً آفلاین است) و [Node.js LTS](https://nodejs.org)
+**پیش‌نیاز: هیچ.** نه Python، نه Node.js، نه اینترنت — ران‌تایم‌ها داخل بسته هستند و پایتونِ نصب‌شده روی سیستم بی‌اهمیت است.
 
 ```
 git clone https://github.com/arammoostafaye/boali-radiology-workstation.git
@@ -16,7 +16,7 @@ cd boali-radiology-workstation
 windows\START-BOALI.bat
 ```
 
-اسکریپت خودش venv می‌سازد، وابستگی‌های پایتون (شامل torch) را **آفلاین از wheel های داخل ریپو** نصب می‌کند، وزن‌های ۴۱۷ مگابایتی را از قطعات داخل ریپو سرهم می‌کند و سه سرویس را بالا می‌آورد؛ سپس مرورگر را روی `http://localhost:3000` باز می‌کند.
+اسکریپت خودش ران‌تایم Python 3.12 و Node.js 22 را از فایل‌های داخل ریپو استخراج می‌کند، وابستگی‌های پایتون (شامل torch) را **آفلاین از wheel های داخل ریپو** نصب می‌کند، وزن‌های ۴۱۷ مگابایتی را از قطعات داخل ریپو سرهم می‌کند و سه سرویس را بالا می‌آورد؛ سپس **صبر می‌کند تا سرور وب واقعاً پاسخ بدهد** و بعد مرورگر را روی `http://localhost:3000` باز می‌کند. (در حالت clone وب در حالت dev اجرا می‌شود و فقط `node_modules` یک بار آنلاین نصب می‌شود — بستهٔ [Release](https://github.com/arammoostafaye/boali-radiology-workstation/releases) **بیلد آمادهٔ Production** وب را هم از قبل داخل دارد: سرور در ~۲ ثانیه بالا می‌آید و هیچ نصبی لازم نیست.)
 
 جزئیات کامل: [`windows/README-WINDOWS.md`](windows/README-WINDOWS.md)
 
@@ -68,9 +68,12 @@ windows\START-BOALI.bat
 
 دو فایل ۴۱۷ مگابایتی به‌خاطر سقف ۱۰۰ مگابایتی گیت‌هاب تکه‌تکه شده‌اند؛ راه‌انداز ویندوز آن‌ها را خودکار سرهم می‌کند و برای هر سیستم‌عاملی `tools/assemble_weights.py` با **صحت‌سنجی SHA-256** (طبق `weights/MANIFEST.txt`) موجود است.
 
-## ران‌تایم آفلاین پایتون — torch ویندوزی داخل ریپو
+## ران‌تایم‌های bundled — پایتون و Node.js هم داخل ریپو
 
-`runtime/wheels/` شامل **۲۹ wheel ویندوزی (win_amd64، CPython 3.12)** است — از جمله `torch-2.11.0+cpu` (۱۰۹ مگابایت، به‌صورت ۲ قطعه زیر ۱۰۰MB)، torchvision، numpy، scipy، opencv، fastapi و بقیه. با پایتون 3.12 نصب **کاملاً آفلاین** انجام می‌شود (`pip install --no-index --find-links`)؛ نسخه‌های دیگر پایتون خودکار به نصب آنلاین fallback می‌کنند. صحت‌سنجی با `runtime/MANIFEST.txt` و `tools/assemble_runtime.py`.
+- `runtime/python-3.12.10-embed-amd64.zip` — **ران‌تایم CPython 3.12 ویندوز (embedded)**؛ لانچر آن را استخراج می‌کند و از آن استفاده می‌کند، پس نسخهٔ پایتون نصب‌شده روی سیستم اصلاً مهم نیست.
+- `runtime/node-v22.23.5-win-x64.zip` — **ران‌تایم Node.js 22 ویندوز**؛ نیازی به نصب Node.js نیست.
+- `runtime/wheels/` شامل **۳۱ wheel ویندوزی (win_amd64، CPython 3.12)** است — از جمله `torch-2.11.0+cpu` (۱۱۴ مگابایت، به‌صورت ۲ قطعه زیر ۱۰۰MB)، torchvision، numpy، scipy، opencv، fastapi، pip و python-multipart. نصب **کاملاً آفلاین** انجام می‌شود (`pip install --no-index --find-links`)؛ صحت‌سنجی با `runtime/MANIFEST.txt` و `tools/assemble_runtime.py`.
+- بستهٔ Portable (Release) حتی **بیلد آمادهٔ Production وب** (خروجی standalone از `next build` — پوشهٔ `webapp/`) را هم دارد: سرور وب بدون کامپایل و بدون `npm install` در ~۲ ثانیه بالا می‌آید — یعنی **صفر مرحلهٔ نصب و صفر کامپایل**.
 
 ## نمونه‌های آماده تست
 
@@ -83,7 +86,7 @@ windows\START-BOALI.bat
 src/                         ← ورک‌استیشن Next.js 16 (UI + پروکسی داخلی)
 mini-services/boali-engine/  ← سرویس استنتاج FastAPI + موتورها + وزن‌ها + نمونه‌ها
 mini-services/boali-pacs/    ← سرویس PACS (کلید API، کوئری پارامتری، ضد path-traversal، audit log)
-runtime/wheels/              ← ۲۹ wheel ویندوزی (torch CPU + همه وابستگی‌های پایتون) برای نصب آفلاین
+runtime/                     ← ران‌تایم‌های bundled: پایتون ۳.۱۲ + نود ۲۲ (zip) + ۳۱ wheel آفلاین
 windows/                     ← START-BOALI.bat + راهنمای ویندوز
 tools/                       ← assemble_weights.py + assemble_runtime.py (سرهم‌کردن قطعات + SHA-256)
 ```

@@ -1,28 +1,30 @@
-# Boali Radiology Workstation — v1.1.0
+# Boali Radiology Workstation — v1.2.0
 
 نسخه کامل و واقعی پلتفرم هوش مصنوعی تصویربرداری بیمارستان بوعلی — رابط ورک‌استیشن (Next.js 16) + موتورهای استنتاج واقعی (FastAPI + PyTorch/ONNX) + آرشیو PACS امن‌شده.
 
-> **English:** Full-stack release of the Boali radiology AI platform: workstation UI, real inference engines, hardened PACS archive. **All 968 MB of model weights AND every Windows Python wheel (incl. torch 2.11 CPU) ship inside the package — no model or torch download at runtime.**
+> **English:** Full-stack release of the Boali radiology AI platform. **This version bundles EVERYTHING — the embedded Python 3.12 runtime, the Node.js 22 runtime, all 968 MB of model weights, every Python wheel (incl. torch 2.11 CPU) and a PREBUILT PRODUCTION web app (standalone `next build`). Extract and run: no Python, no Node.js, no internet, no compile step on the target machine.**
 
-## 🆕 جدید در v1.1.0
+## 🆕 جدید در v1.2.0 — اجرای کاملاً آفلاین و مستقل
 
-- **torch ویندوزی + تمام وابستگی‌های پایتون داخل بسته** (`runtime/wheels/` — شامل torch 2.11.0+cpu، torchvision، numpy، scipy، opencv، fastapi و ۲۹ wheel دیگر)
-- نصب پایتون در ویندوز **کاملاً آفلاین و خودکار** — با پایتون **3.12 (64bit)** لانچر بدون اینترنت همه‌چیز را از فایل‌های داخلی نصب می‌کند؛ نسخه‌های دیگر پایتون به‌صورت خودکار به نصب آنلاین برمی‌گردند
+- **ران‌تایم Python 3.12 داخل بسته** (`runtime/python-3.12.10-embed-amd64.zip`) — دیگر **هیچ وابستگی به پایتون نصب‌شده روی سیستم نیست**؛ هر نسخه‌ای (مثلاً 3.13 یا 3.14) که روی ویندوز نصب باشد بی‌اهمیت است.
+- **ران‌تایم Node.js 22 داخل بسته** (`runtime/node-v22.23.5-win-x64.zip`) — نیازی به نصب Node.js هم نیست.
+- **وب با بیلد Production داخل بسته** — `next build` (خروجی standalone) از قبل روی سرورهای گیت‌هاب اجرا شده؛ سرور وب **در ~۲ ثانیه** بالا می‌آید (بدون `next dev` و بدون کامپایل ۴۰–۹۰ ثانیه‌ای) و مرورگر **فقط بعد از بالا آمدن واقعی سرور** باز می‌شود (لانچر تا پاسخ‌گویی HTTP صبر می‌کند). نه `npm install` لازم است نه هیچ اینترنتی.
+- بستهٔ Portable با **site-packages از پیش نصب‌شده** عرضه می‌شود (torch و همه وابستگی‌ها) — دیگر نه pip، نه bootstrap، هیچ نصبی در اولین اجرا انجام نمی‌شود.
+- wheel های `pip` و `python-multipart` (لازم برای آپلود فایل در FastAPI) به مجموعهٔ آفلاین اضافه شدند.
+- لانچرِ v1.1.0 در سیستم‌هایی که پایتون 3.12 نداشتند به نصب آنلاین برمی‌گشت و اگر Node هم نصب نبود کلاً متوقف می‌شد — این نسخه **در همهٔ حالات آفلاین و بدون پیش‌نیاز** است.
 
 ---
 
-## 🚀 شروع سریع در ویندوز — دو روش
+## 🚀 شروع سریع در ویندوز
 
-### روش ۱: بسته آماده Portable (پیشنهادی — بدون نیاز به Git)
+1. فایل **`Boali-Radiology-Workstation-v1.2.0-Windows-Portable.zip`** را از همین صفحه دانلود کنید (~۱.۴ گیگابایت).
+2. آن را در یک **مسیر کوتاه** (مثلاً `C:\Boali`) extract کنید.
+3. روی **`Boali\windows\START-BOALI.bat`** دوبار کلیک کنید.
+4. مرورگر **خودکار و فقط بعد از بالا آمدن سرور** روی `http://localhost:3000` باز می‌شود (سرور وب production است و در ~۲ ثانیه بالا می‌آید).
 
-1. فایل **`Boali-Radiology-Workstation-v1.1.0-Windows-Portable.zip`** را از همین صفحه دانلود کنید (~۱.۱ گیگابایت).
-2. آن را extract کنید.
-3. روی **`windows\START-BOALI.bat`** دوبار کلیک کنید.
-4. مرورگر خودکار روی `http://localhost:3000` باز می‌شود.
+> **پیش‌نیاز: هیچ.** نه Python، نه Node.js، نه اینترنت، نه کامپایل. همه‌چیز — ران‌تایم‌ها، وزن‌ها، wheel ها و بیلد آمادهٔ وب — داخل بسته است و در اولین اجرا فقط چند فایل زیپ محلی باز می‌شوند (چند ثانیه).
 
-> در این بسته وزن‌های مدل و wheel تورچ **از قبل سرهم شده‌اند** — هیچ مرحله اضافی وجود ندارد.
-
-### روش ۲: Git
+### اجرا از سورس (Git)
 
 ```
 git clone https://github.com/arammoostafaye/boali-radiology-workstation.git
@@ -30,18 +32,7 @@ cd boali-radiology-workstation
 windows\START-BOALI.bat
 ```
 
-لانچر در اولین اجرا وزن‌های بزرگ و wheel تورچ را از تکه‌های داخل خود ریپو سرهم می‌کند (کاملاً محلی، صحت‌سنجی SHA-256).
-
----
-
-## پیش‌نیازها
-
-| نرم‌افزار | نسخه | توضیح |
-|---|---|---|
-| Python | **3.12 (64bit)** — پیشنهادی | با این نسخه نصب پایتون **کاملاً آفلاین** است؛ نسخه‌های دیگر هم کار می‌کنند ولی آنلاین نصب می‌کنند |
-| Node.js | LTS 18+ | یا Bun — فقط بار اول برای `node_modules` اینترنت لازم است |
-
-> ⚠️ **هیچ فایل مدلی و نه torch از اینترنت دانلود نمی‌شود** — همه داخل بسته هستند.
+> در حالت clone: وزن‌های بزرگ، wheel تورچ و ران‌تایم‌ها در اولین اجرا از فایل‌های داخل خود ریپو سرهم/استخراج می‌شوند (کاملاً محلی، صحت‌سنجی SHA-256) و وب در حالت dev اجرا می‌شود (فقط `node_modules` در این حالت یک بار با اینترنت نصب می‌شود).
 
 ---
 
@@ -66,15 +57,16 @@ windows\START-BOALI.bat
 
 - `SHA256SUMS.txt` (پیوست همین Release) — هش بسته portable.
 - `mini-services/boali-engine/weights/MANIFEST.txt` — اندازه و SHA-256 تک‌تک وزن‌های مدل.
-- `runtime/MANIFEST.txt` — اندازه و SHA-256 تک‌تک ۲۹ wheel ویندوزی.
+- `runtime/MANIFEST.txt` — اندازه و SHA-256 تک‌تک ۳۱ wheel ویندوزی.
 
 ## نکات اجرا
 
 | مورد | توضیح |
 |---|---|
+| مسیر نصب | مسیر کوتاه (مثل `C:\Boali`) توصیه می‌شود — لانچر خودش هم هشدار می‌دهد |
 | SmartScreen | More info → **Run anyway** (اسکریپت محلی است، امضا ندارد) |
 | توقف | بستن ۳ پنجره سرویس |
-| اجرای مجدد | دوباره `START-BOALI.bat` (نصب‌ها تکرار نمی‌شوند) |
+| اجرای مجدد | دوباره `START-BOALI.bat` (هیچ نصبی تکرار نمی‌شود) |
 | رفع اشکال | `windows/README-WINDOWS.md` |
 
 ---
