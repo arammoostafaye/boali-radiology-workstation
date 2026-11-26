@@ -1,14 +1,14 @@
 # Boali Radiology Workstation
 
-**نسخه کامل و واقعی پلتفرم هوش مصنوعی تصویربرداری بیمارستان بوعلی** — رابط ورک‌استیشن مدرن (Next.js 16) + موتورهای استنتاج واقعی (FastAPI + PyTorch/ONNX) + آرشیو PACS امن‌شده. همه وزن‌های مدل‌ها داخل همین ریپو هستند و **هیچ فایل مدلی هنگام اجرا دانلود نمی‌شود**.
+**نسخه کامل و واقعی پلتفرم هوش مصنوعی تصویربرداری بیمارستان بوعلی** — رابط ورک‌استیشن مدرن (Next.js 16) + موتورهای استنتاج واقعی (FastAPI + PyTorch/ONNX) + آرشیو PACS امن‌شده. همه وزن‌های مدل‌ها **و** wheel ویندوزی torch و تمام وابستگی‌های پایتون داخل همین ریپو هستند — **هیچ فایل مدلی و نه torch هنگام اجرا دانلود نمی‌شود**.
 
-> **English:** Full-stack edition of the Boali Hospital radiology AI platform: a Next.js 16 workstation UI talking to real FastAPI inference engines (YOLOv8 ONNX fracture detection, Qure bone suppression, DenseNet-18 lung screen, ResNet-50 mammography, a 3D CT MPR/VR studio) plus a hardened PACS archive. **All model weights ship inside this repository** — nothing is downloaded at runtime. Windows one-click launcher included.
+> **English:** Full-stack edition of the Boali Hospital radiology AI platform: a Next.js 16 workstation UI talking to real FastAPI inference engines (YOLOv8 ONNX fracture detection, Qure bone suppression, DenseNet-18 lung screen, ResNet-50 mammography, a 3D CT MPR/VR studio) plus a hardened PACS archive. **All model weights AND the Windows Python runtime (torch CPU + 28 more wheels) ship inside this repository** — nothing is downloaded at runtime. Windows one-click launcher included.
 
 ---
 
 ## ⚡ اجرای سریع در ویندوز (یک کلیک)
 
-پیش‌نیاز (فقط بار اول): [Python 3.10+](https://www.python.org/downloads/) و [Node.js LTS](https://nodejs.org)
+پیش‌نیاز (فقط بار اول): [Python **3.12 64-bit**](https://www.python.org/downloads/) (با این نسخه نصب پایتون کاملاً آفلاین است) و [Node.js LTS](https://nodejs.org)
 
 ```
 git clone https://github.com/arammoostafaye/boali-radiology-workstation.git
@@ -16,7 +16,7 @@ cd boali-radiology-workstation
 windows\START-BOALI.bat
 ```
 
-اسکریپت خودش venv می‌سازد، وابستگی‌ها را نصب می‌کند، وزن‌های ۴۱۷ مگابایتی را از قطعات داخل ریپو سرهم می‌کند و سه سرویس را بالا می‌آورد؛ سپس مرورگر را روی `http://localhost:3000` باز می‌کند.
+اسکریپت خودش venv می‌سازد، وابستگی‌های پایتون (شامل torch) را **آفلاین از wheel های داخل ریپو** نصب می‌کند، وزن‌های ۴۱۷ مگابایتی را از قطعات داخل ریپو سرهم می‌کند و سه سرویس را بالا می‌آورد؛ سپس مرورگر را روی `http://localhost:3000` باز می‌کند.
 
 جزئیات کامل: [`windows/README-WINDOWS.md`](windows/README-WINDOWS.md)
 
@@ -68,6 +68,10 @@ windows\START-BOALI.bat
 
 دو فایل ۴۱۷ مگابایتی به‌خاطر سقف ۱۰۰ مگابایتی گیت‌هاب تکه‌تکه شده‌اند؛ راه‌انداز ویندوز آن‌ها را خودکار سرهم می‌کند و برای هر سیستم‌عاملی `tools/assemble_weights.py` با **صحت‌سنجی SHA-256** (طبق `weights/MANIFEST.txt`) موجود است.
 
+## ران‌تایم آفلاین پایتون — torch ویندوزی داخل ریپو
+
+`runtime/wheels/` شامل **۲۹ wheel ویندوزی (win_amd64، CPython 3.12)** است — از جمله `torch-2.11.0+cpu` (۱۰۹ مگابایت، به‌صورت ۲ قطعه زیر ۱۰۰MB)، torchvision، numpy، scipy، opencv، fastapi و بقیه. با پایتون 3.12 نصب **کاملاً آفلاین** انجام می‌شود (`pip install --no-index --find-links`)؛ نسخه‌های دیگر پایتون خودکار به نصب آنلاین fallback می‌کنند. صحت‌سنجی با `runtime/MANIFEST.txt` و `tools/assemble_runtime.py`.
+
 ## نمونه‌های آماده تست
 
 - `public/samples/` — ۳ ماموگرافی + CT + MR برای تست مستقیم داخل خود UI
@@ -79,14 +83,15 @@ windows\START-BOALI.bat
 src/                         ← ورک‌استیشن Next.js 16 (UI + پروکسی داخلی)
 mini-services/boali-engine/  ← سرویس استنتاج FastAPI + موتورها + وزن‌ها + نمونه‌ها
 mini-services/boali-pacs/    ← سرویس PACS (کلید API، کوئری پارامتری، ضد path-traversal، audit log)
+runtime/wheels/              ← ۲۹ wheel ویندوزی (torch CPU + همه وابستگی‌های پایتون) برای نصب آفلاین
 windows/                     ← START-BOALI.bat + راهنمای ویندوز
-tools/                       ← assemble_weights.py (سرهم‌کردن قطعات + SHA-256)
+tools/                       ← assemble_weights.py + assemble_runtime.py (سرهم‌کردن قطعات + SHA-256)
 ```
 
 ## اجرا در لینوکس/مک (دستی)
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
+python3.12 -m venv .venv && . .venv/bin/activate
 pip install fastapi uvicorn numpy opencv-python-headless Pillow pydicom scipy
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 python3 tools/assemble_weights.py
@@ -94,6 +99,8 @@ python3 tools/assemble_weights.py
 (cd mini-services/boali-pacs   && ../.venv/bin/python -m uvicorn app:app --port 3021) &
 bun install && bun run dev
 ```
+
+> `runtime/wheels/` فقط برای ویندوز است — روی لینوکس/مک از PyPI نصب کنید.
 
 ## اعتبار و منابع
 

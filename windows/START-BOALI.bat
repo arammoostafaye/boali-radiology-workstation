@@ -12,23 +12,30 @@ echo.
 
 cd /d "%~dp0.."
 set "ROOT=%CD%"
+set "WHEELS=%ROOT%\runtime\wheels"
 
 REM ---------------- 1. locate Python -------------------------
+REM py -3.12 is preferred: the bundled offline wheels in runtime/wheels
+REM are built for CPython 3.12 64-bit (win_amd64).
 set "PY="
-py -3 --version >nul 2>&1 && set "PY=py -3"
+py -3.12 --version >nul 2>&1 && set "PY=py -3.12"
+if not defined PY (
+  py -3 --version >nul 2>&1 && set "PY=py -3"
+)
 if not defined PY (
   python --version >nul 2>&1 && set "PY=python"
 )
 if not defined PY (
   color 0C
   echo [ERROR] Python 3 was not found on this machine.
-  echo         Install Python 3.10+ from https://www.python.org/downloads/
+  echo         Install Python 3.12 64-bit from https://www.python.org/downloads/
   echo         IMPORTANT: tick "Add python.exe to PATH" during install.
   echo.
   pause
   exit /b 1
 )
 for /f "tokens=*" %%v in ('%PY% --version 2^>^&1') do echo [OK] %%v found.
+for /f "tokens=2" %%v in ('%PY% --version 2^>^&1') do set "PYVER=%%v"
 
 REM ---------------- 2. create / reuse venv --------------------
 if not exist "%ROOT%\.venv\Scripts\python.exe" (
@@ -43,23 +50,58 @@ if not exist "%ROOT%\.venv\Scripts\python.exe" (
 )
 set "VENV=%ROOT%\.venv\Scripts\python.exe"
 
-REM ---------------- 3. install dependencies -------------------
+REM ---------------- 3. install Python dependencies ------------
+REM EVERY Windows wheel ships inside this repo (runtime/wheels/) - the
+REM install below runs OFFLINE (no internet) when the detected Python
+REM matches the bundled build: CPython 3.12 64-bit. Other versions fall
+REM back to an online install automatically.
 set "STAMP=%ROOT%\.venv\.boali_deps_done"
 if not exist "%STAMP%" (
-  echo [SETUP] Installing Python dependencies ^(torch CPU + engines^) ...
-  echo         This downloads about 250 MB and runs once.
-  "%VENV%" -m pip install --upgrade pip
-  "%VENV%" -m pip install fastapi uvicorn numpy opencv-python-headless Pillow pydicom scipy
-  if errorlevel 1 (
-    color 0C
-    echo [ERROR] Base dependency install failed - check your internet connection.
-    pause
-    exit /b 1
-  )
-  "%VENV%" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-  if errorlevel 1 (
+  echo [SETUP] Detected Python !PYVER!.
+  set "OFFLINE=1"
+  if /i not "!PYVER:~0,4!"=="3.12" (
     color 0E
-    echo [WARN] torch CPU install failed - AI engines will report "deps missing".
+    echo [WARN] The bundled offline wheels target Python 3.12 64-bit.
+    echo         Found !PYVER! - falling back to an ONLINE install.
+    set "OFFLINE=0"
+  )
+  if "!OFFLINE!"=="1" (
+    echo [RUNTIME] Verifying bundled wheels + assembling torch from chunks ...
+    "%VENV%" "%ROOT%\tools\assemble_runtime.py"
+    if errorlevel 1 (
+      color 0C
+      echo [ERROR] Bundled runtime wheels are missing or corrupt.
+      echo         Re-download / re-extract the project and try again.
+      pause
+      exit /b 1
+    )
+    echo [SETUP] Installing Python dependencies OFFLINE from bundled wheels ...
+    "%VENV%" -m pip install --no-index --find-links "%WHEELS%" fastapi uvicorn numpy opencv-python-headless Pillow pydicom scipy torch torchvision
+    if errorlevel 1 (
+      color 0E
+      echo [WARN] Offline install failed - falling back to an ONLINE install.
+      set "OFFLINE=0"
+    )
+  )
+  if "!OFFLINE!"=="0" (
+    echo [SETUP] Installing Python dependencies ONLINE - about 250 MB, once ...
+    "%VENV%" -m pip install --upgrade pip
+    if errorlevel 1 (
+      color 0E
+      echo [WARN] Could not upgrade pip - continuing with the bundled version.
+    )
+    "%VENV%" -m pip install fastapi uvicorn numpy opencv-python-headless Pillow pydicom scipy
+    if errorlevel 1 (
+      color 0C
+      echo [ERROR] Base dependency install failed - check your internet connection.
+      pause
+      exit /b 1
+    )
+    "%VENV%" -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+    if errorlevel 1 (
+      color 0E
+      echo [WARN] torch CPU install failed - AI engines will report "deps missing".
+    )
   )
   echo done > "%STAMP%"
 ) else (
@@ -108,8 +150,10 @@ if not defined RUNNER (
 )
 
 REM ---------------- 6. install web dependencies -----------------
+REM NOTE: node_modules cannot be bundled across platforms (native binaries),
+REM so this step needs internet ONCE. Models and Python deps are offline.
 if not exist "%ROOT%\node_modules" (
-  echo [SETUP] Installing web dependencies - first run only ...
+  echo [SETUP] Installing web dependencies - first run only, needs internet ...
   if "%RUNNER%"=="bun" ( bun install ) else ( npm install )
   if errorlevel 1 (
     color 0C
@@ -149,6 +193,9 @@ echo.
 echo    [1] boali-engine :3020   - real AI inference (5 engines)
 echo    [2] boali-pacs   :3021   - hardened PACS archive
 echo    [3] boali-web    :3000   - the workstation UI
+echo.
+echo  Python dependencies and ALL model weights were installed from
+echo  files inside this repository - no model downloads, ever.
 echo.
 echo  Wait until the web window prints "Ready", then open:
 echo.

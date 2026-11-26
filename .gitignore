@@ -80,3 +80,11 @@ __pycache__/
 # tools/assemble_weights.py and never committed.
 mini-services/boali-engine/weights/bone_suppression.ts
 mini-services/boali-engine/weights/lung_component_suppression.ts
+
+# ---- Boali: bundled Windows runtime wheels ------------------------------
+# torch (109 MB) is over GitHub's 100 MiB per-file limit, so it is shipped
+# split in runtime/wheels/chunks/ and assembled locally by
+# windows/START-BOALI.bat / tools/assemble_runtime.py (sha256-verified
+# against runtime/MANIFEST.txt). The assembled wheel is never committed.
+# (torchvision-*.whl does NOT match this pattern and stays tracked.)
+runtime/wheels/torch-*.whl
