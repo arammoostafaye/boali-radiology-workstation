@@ -122,7 +122,7 @@ jobs:
           sha256sum "${NAME}.zip" > SHA256SUMS.txt
           cat SHA256SUMS.txt
           ls -lh
-          du -sh "${STAGE}"
+          du -sh "${GITHUB_WORKSPACE}/dist-stage/Boali"
 
       - name: Attach package to the GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
