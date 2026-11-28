@@ -263,78 +263,43 @@ if exist "%ROOT%\webapp\server.js" (
 )
 
 echo.
-echo [START] Launching the three services ...
+echo [START] Launching the three services - completely HIDDEN ...
 echo.
 
-REM ---------------- 7. start engine (:3020) ---------------------
-start "boali-engine :3020" cmd /k "chcp 65001 >nul & cd /d "%ROOT%\mini-services\boali-engine" && "%PYEXE%" -m uvicorn app:app --host 127.0.0.1 --port 3020"
-
-REM ---------------- 8. start pacs (:3021) -----------------------
-timeout /t 2 /nobreak >nul
-start "boali-pacs :3021" cmd /k "chcp 65001 >nul & cd /d "%ROOT%\mini-services\boali-pacs" && "%PYEXE%" -m uvicorn app:app --host 127.0.0.1 --port 3021"
-
-REM ---------------- 9. start web (:3000) ------------------------
-REM Production path: webapp\server.js is a PREBUILT standalone Next.js
-REM server - it starts in ~2 seconds (no webpack compile on boot).
-REM PORT / HOSTNAME are inherited by the child process; binding to
-REM 127.0.0.1 avoids the Windows Firewall popup.
-REM Fallback path (source checkout): `next` is invoked directly (not via
-REM `npm run dev`) because the package.json dev script pipes through
-REM `tee`, which does not exist in Windows cmd.
-timeout /t 2 /nobreak >nul
-if exist "%ROOT%\webapp\server.js" (
-  set "PORT=3000"
-  set "HOSTNAME=127.0.0.1"
-  start "boali-web :3000" cmd /k "chcp 65001 >nul & cd /d "%ROOT%\webapp" && "%NODEEXE%" server.js"
-) else (
-  start "boali-web :3000" cmd /k "chcp 65001 >nul & cd /d "%ROOT%" && "%NODEEXE%" "node_modules\next\dist\bin\next" dev -p 3000 --webpack"
+REM ---------------- 7. launch all services (HIDDEN) -------------
+REM All three services (engine :3020, pacs :3021, web :3000) start
+REM as DETACHED background processes with NO console windows - a
+REM clean hospital desktop. Their output is appended to logs\
+REM (engine.log, pacs.log, web.log) and the browser only opens
+REM after the web server really answers HTTP. Run STOP-BOALI.bat
+REM (next to this launcher) to stop everything.
+"%PYEXE%" "%ROOT%\tools\boali_launch.py" --root "%ROOT%" --pyexe "%PYEXE%" --nodeexe "%NODEEXE%"
+set "LRET=%errorlevel%"
+if not "%LRET%"=="0" (
+  color 0E
+  echo [WARN] The launcher reported a problem - check the logs folder.
 )
 
+echo.
 echo ==========================================================
-echo  All services launched in separate windows:
+echo  All services are running in the background - NO windows:
 echo.
 echo    [1] boali-engine :3020   - real AI inference (5 engines)
 echo    [2] boali-pacs   :3021   - hardened PACS archive
 echo    [3] boali-web    :3000   - the workstation UI
 echo.
+echo  Logs:      logs\engine.log   logs\pacs.log   logs\web.log
+echo  To STOP:   double-click STOP-BOALI.bat (next to this file)
+echo ==========================================================
+echo.
 echo  Python 3.12, Node.js 22, every wheel and ALL model weights
 echo  were used from files INSIDE this package - no downloads, no
 echo  internet connection, no system-wide installations required.
 echo.
-echo  The web app is a PREBUILT production server - it is up in
-echo  ~2 seconds. This launcher now waits for it to answer and
-echo  then opens the browser automatically on:
-echo.
-echo      http://localhost:3000
-echo.
-echo  To stop everything: close the three service windows.
-echo ==========================================================
-echo.
-echo [WAIT] Waiting for the web server on http://127.0.0.1:3000 ...
-where curl >nul 2>&1
-if errorlevel 1 (
-  color 0E
-  echo        curl not found - opening the browser in 20 seconds ...
-  timeout /t 20 /nobreak >nul
-  goto :openbrowser
-)
-set /a WTRIES=0
-:waitweb
-set /a WTRIES+=1
-curl -s -o NUL --max-time 2 http://127.0.0.1:3000/
-if not errorlevel 1 goto :openbrowser
-if !WTRIES! GTR 90 goto :openbrowser
-timeout /t 1 /nobreak >nul
-goto :waitweb
-
-:openbrowser
-start http://localhost:3000
-color 0A
-echo [OK] Web server is up - browser opened.
-echo Done. You can close this launcher window.
-timeout /t 5 >nul
+echo  This launcher window closes itself in a few seconds ...
+timeout /t 6 >nul
 endlocal
-exit /b 0
+exit /b %LRET%
 
 REM ============================================================
 REM failure labels

@@ -16,7 +16,7 @@ cd boali-radiology-workstation
 windows\START-BOALI.bat
 ```
 
-اسکریپت خودش ران‌تایم Python 3.12 و Node.js 22 را از فایل‌های داخل ریپو استخراج می‌کند، وابستگی‌های پایتون (شامل torch) را **آفلاین از wheel های داخل ریپو** نصب می‌کند، وزن‌های ۴۱۷ مگابایتی را از قطعات داخل ریپو سرهم می‌کند و سه سرویس را بالا می‌آورد؛ سپس **صبر می‌کند تا سرور وب واقعاً پاسخ بدهد** و بعد مرورگر را روی `http://localhost:3000` باز می‌کند. (در حالت clone وب در حالت dev اجرا می‌شود و فقط `node_modules` یک بار آنلاین نصب می‌شود — بستهٔ [Release](https://github.com/arammoostafaye/boali-radiology-workstation/releases) **بیلد آمادهٔ Production** وب را هم از قبل داخل دارد: سرور در ~۲ ثانیه بالا می‌آید و هیچ نصبی لازم نیست.)
+اسکریپت خودش ران‌تایم Python 3.12 و Node.js 22 را از فایل‌های داخل ریپو استخراج می‌کند، وابستگی‌های پایتون (شامل torch) را **آفلاین از wheel های داخل ریپو** نصب می‌کند، وزن‌های ۴۱۷ مگابایتی را از قطعات داخل ریپو سرهم می‌کند و سه سرویس را **کاملاً مخفی در پس‌زمینه** بالا می‌آورد (هیچ پنجرهٔ CMD روی دسکتاپ باز نمی‌شود — لاگ‌ها در `logs/`)؛ سپس **صبر می‌کند تا سرور وب واقعاً پاسخ بدهد** و بعد مرورگر را روی `http://localhost:3000` باز می‌کند. (در حالت clone وب در حالت dev اجرا می‌شود و فقط `node_modules` یک بار آنلاین نصب می‌شود — بستهٔ [Release](https://github.com/arammoostafaye/boali-radiology-workstation/releases) **بیلد آمادهٔ Production** وب را هم از قبل داخل دارد: سرور در ~۲ ثانیه بالا می‌آید و هیچ نصبی لازم نیست.)
 
 جزئیات کامل: [`windows/README-WINDOWS.md`](windows/README-WINDOWS.md)
 
@@ -87,7 +87,7 @@ src/                         ← ورک‌استیشن Next.js 16 (UI + پروک
 mini-services/boali-engine/  ← سرویس استنتاج FastAPI + موتورها + وزن‌ها + نمونه‌ها
 mini-services/boali-pacs/    ← سرویس PACS (کلید API، کوئری پارامتری، ضد path-traversal، audit log)
 runtime/                     ← ران‌تایم‌های bundled: پایتون ۳.۱۲ + نود ۲۲ (zip) + ۳۱ wheel آفلاین
-windows/                     ← START-BOALI.bat + راهنمای ویندوز
+windows/                     ← START-BOALI.bat + STOP-BOALI.bat + راهنمای ویندوز
 tools/                       ← assemble_weights.py + assemble_runtime.py (سرهم‌کردن قطعات + SHA-256)
 ```
 

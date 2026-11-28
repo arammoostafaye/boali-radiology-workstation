@@ -80,7 +80,7 @@ jobs:
             --exclude='/tool-results' --exclude='/.zscripts' \
             --exclude='/examples' --exclude='/tests' --exclude='/scripts' \
             --exclude='/Caddyfile' --exclude='*.db' --exclude='/runtime/tmp' \
-            --exclude='/node_modules' \
+            --exclude='/logs' --exclude='/node_modules' \
             ./ "${STAGE}/"
 
           # ---- prebuilt production web app (server.js + traced modules) ----
