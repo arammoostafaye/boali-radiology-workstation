@@ -18,6 +18,7 @@ import {
   Boxes,
   CheckCircle2,
   ClipboardList,
+  Database,
   Droplets,
   FileWarning,
   Grid3x3,
@@ -49,6 +50,11 @@ import {
 } from "@/lib/boali-engine";
 import { Ct3dStudioView } from "./ct3d-studio";
 import type { LauncherModuleId } from "./module-launcher";
+import {
+  fetchPacsDicomFile,
+  modalityToModule,
+  type PacsPendingStudy,
+} from "@/lib/pacs-study-store";
 
 /* ----------------------------- registry ----------------------------- */
 
@@ -1450,6 +1456,96 @@ interface ModuleWorkspaceProps {
   onOpenWorkstation: () => void;
   onResult: (engineId: EngineId, result: EngineResult) => void;
   results: Partial<Record<EngineId, EngineResult>>;
+  /** a study downloaded through the MedalPACS bridge, handed to its
+   *  dedicated module room (MG → mammo, CT → studio, DX → fracture) */
+  pacsStudy?: PacsPendingStudy | null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  PACS study strip — the real study downloaded from the hospital     */
+/*  PACS, ready to run through this module's real engine               */
+/* ------------------------------------------------------------------ */
+
+function PacsStudyBar({
+  study,
+  moduleId,
+  loading,
+  onRunFile,
+  onRunSeries,
+}: {
+  study: PacsPendingStudy;
+  moduleId: LauncherModuleId;
+  loading: boolean;
+  onRunFile: (f: File) => void;
+  onRunSeries: () => void;
+}) {
+  const isCt = moduleId === "studio";
+  const isTarget = modalityToModule(study.modality) === moduleId;
+  return (
+    <div
+      className="shrink-0 border-b border-[#16323f] bg-[#0c1a22] px-4 py-2.5"
+      role="region"
+      aria-label="PACS study"
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span className="flex h-7 items-center gap-1.5 rounded-full bg-[#123c2b] px-2.5 text-[10.5px] font-bold text-[#4ade80]">
+          <Database className="h-3.5 w-3.5" aria-hidden="true" />
+          PACS
+        </span>
+        <span dir="rtl" className="text-[11.5px] font-semibold text-[#c3d3e2]">
+          {study.pname ?? "بیمار"}
+        </span>
+        <span className="rounded bg-[#223046] px-1.5 py-0.5 font-mono text-[10px] font-bold text-[#a9bccd]">
+          {study.modality || "?"}
+        </span>
+        <span className="font-mono text-[9.5px] text-[#5a6e82]">PID {study.pid}</span>
+        <span dir="rtl" className="text-[10px] text-[#5a6e82]">
+          {study.files.length} فایل دایکام از پکس بیمارستان
+        </span>
+        <span className="ml-auto" />
+        {isCt ? (
+          <button
+            type="button"
+            disabled={loading || study.files.length === 0}
+            onClick={onRunSeries}
+            className="flex h-7 items-center gap-1.5 rounded-lg px-3 text-[11px] font-semibold transition-all enabled:hover:brightness-110 disabled:opacity-50"
+            style={{ background: "#2dd4bf", color: "#08211d" }}
+          >
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Play className="h-3 w-3" aria-hidden="true" />
+            )}
+            ساخت حجم از سری PACS
+          </button>
+        ) : (
+          <span className="text-[10px] text-[#5a6e82]">
+            {isTarget ? "auto-run شروع شد — فایل دیگر را انتخاب کنید:" : "فایل را برای تحلیل انتخاب کنید:"}
+          </span>
+        )}
+      </div>
+      {!isCt && (
+        <div className="scroll-dark mt-2 flex gap-1.5 overflow-x-auto pb-0.5">
+          {study.files.map((f) => (
+            <button
+              key={f.name}
+              type="button"
+              disabled={loading}
+              onClick={() => void (async () => {
+                const file = await fetchPacsDicomFile(study.sid, study.pid, f.name);
+                if (file) onRunFile(file);
+              })()}
+              className="flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-[#253548] bg-[#141e2a] px-2.5 font-mono text-[9.5px] text-[#8fa3b8] transition-colors enabled:hover:border-[#2dd4bf]/50 enabled:hover:text-white disabled:opacity-45"
+              title={f.name}
+            >
+              <Play className="h-2.5 w-2.5" aria-hidden="true" />
+              {f.name.split("/").pop()}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ModuleWorkspace({
@@ -1459,10 +1555,53 @@ export function ModuleWorkspace({
   onOpenWorkstation,
   onResult,
   results,
+  pacsStudy,
 }: ModuleWorkspaceProps) {
   const meta = MODULES.find((m) => m.id === moduleId) ?? MODULES[0];
   /* keyed remount per module so each room starts fresh */
   const run = useEngineRun(meta, onResult);
+
+  /* ---- PACS hand-off: fetch the cached DICOM files and run them ---- */
+  const [pacsLoading, setPacsLoading] = useState(false);
+  const pacsLoadedFor = useRef<number | null>(null);
+  const loadPacsFiles = useCallback(
+    async (s: PacsPendingStudy): Promise<File[]> => {
+      setPacsLoading(true);
+      try {
+        const out: File[] = [];
+        for (const f of s.files.slice(0, 60)) {
+          const file = await fetchPacsDicomFile(s.sid, s.pid, f.name);
+          if (file) out.push(file);
+        }
+        return out;
+      } finally {
+        setPacsLoading(false);
+      }
+    },
+    []
+  );
+
+  const pacsOpenAt = pacsStudy?.openAt;
+  /* stable callbacks only — the `run` object itself is rebuilt on every
+   * render, so it must NOT be an effect dependency (the auto-run would
+   * be cancelled by the re-render that loadPacsFiles triggers). */
+  const { runFile, runCt3d } = run;
+  useEffect(() => {
+    if (!pacsStudy || pacsLoadedFor.current === pacsOpenAt) return;
+    if (modalityToModule(pacsStudy.modality) !== moduleId) return;
+    if (moduleId === "report") return;
+    pacsLoadedFor.current = pacsOpenAt;
+    let cancelled = false;
+    void (async () => {
+      const files = await loadPacsFiles(pacsStudy);
+      if (cancelled || files.length === 0) return;
+      if (moduleId === "studio") runCt3d(files);
+      else runFile(files[0]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pacsOpenAt, moduleId, pacsStudy, loadPacsFiles, runFile, runCt3d]);
 
   const body =
     meta.id === "report" ? (
@@ -1492,6 +1631,20 @@ export function ModuleWorkspace({
         onSwitchModule={onSwitchModule}
         onOpenWorkstation={onOpenWorkstation}
       >
+        {pacsStudy && meta.engineId && (
+          <PacsStudyBar
+            study={pacsStudy}
+            moduleId={moduleId}
+            loading={pacsLoading}
+            onRunFile={run.runFile}
+            onRunSeries={() => {
+              void (async () => {
+                const files = await loadPacsFiles(pacsStudy);
+                if (files.length > 0) run.runCt3d(files);
+              })();
+            }}
+          />
+        )}
         {body}
       </ModuleShell>
     </motion.div>

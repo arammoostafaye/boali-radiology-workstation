@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  ArrowUpRight,
   Bone,
   Brain,
   CloudDownload,
@@ -43,6 +44,11 @@ import {
   useMedalBridge,
   type MedalBridgeInfo,
 } from "@/lib/medal-bridge";
+import {
+  modalityToModule,
+  moduleLabelFa,
+  usePacsStudy,
+} from "@/lib/pacs-study-store";
 import {
   analyzeEngine,
   type BoneResult,
@@ -761,6 +767,7 @@ function AiResultCard({ r }: { r: MedalAiFileResult }) {
 
 function MedalConnected() {
   const { info, clearBridge } = useMedalBridge();
+  const { setPending } = usePacsStudy();
   const [worklist, setWorklist] = useState<WorklistResult | null>(null);
   const [wlState, setWlState] = useState<"loading" | "ok" | "error" | "expired">("loading");
   const [wlError, setWlError] = useState("");
@@ -1105,6 +1112,28 @@ function MedalConnected() {
           {/* files + AI */}
           {files && (
             <div className="space-y-2.5">
+              {/* open in the dedicated module room */}
+              <button
+                type="button"
+                onClick={() => {
+                  setPending({
+                    sid: info.sid,
+                    pid: study.pid ?? "",
+                    pname: study.pname,
+                    modality: study.modality,
+                    studyKey: study.studyKey,
+                    hashKey: study.hashKey,
+                    files,
+                  });
+                }}
+                className="flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-[#a78bfa] to-[#7c3aed] text-[11.5px] font-bold text-[#f5f3ff] transition-all hover:brightness-110 active:scale-[0.99]"
+              >
+                <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+                <span dir="rtl">
+                  باز کردن در {moduleLabelFa(modalityToModule(study.modality))}
+                </span>
+              </button>
+
               <div className="flex items-center justify-between gap-2">
                 <p dir="rtl" className="text-[11px] font-semibold text-[#4ade80]">
                   ✓ {fileCount} فایل دایکام دریافت شد

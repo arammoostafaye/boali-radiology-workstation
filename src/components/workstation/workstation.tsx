@@ -24,6 +24,10 @@ import { ModuleLauncher, type LauncherModuleId } from "./module-launcher";
 import { ModuleWorkspace } from "./module-workspace";
 import { SplashScreen, hasSplashBeenSeen } from "./splash-screen";
 import type { EngineId, EngineResult } from "@/lib/boali-engine";
+import {
+  modalityToModule,
+  usePacsStudy,
+} from "@/lib/pacs-study-store";
 
 type Stage = "launcher" | "module" | "workstation";
 
@@ -144,6 +148,22 @@ export function Workstation() {
     setStage("module");
   }, []);
 
+  /* -------- PACS study hand-off: a study downloaded through the
+   * MedalPACS bridge opens in its DEDICATED module room --------
+   * deferred via timeout(0) so no setState runs synchronously
+   * inside the effect body (same pattern as the splash overlay). */
+  const pacsPending = usePacsStudy((s) => s.pending);
+  const pacsOpenAt = pacsPending?.openAt;
+  useEffect(() => {
+    if (!pacsOpenAt) return;
+    const t = setTimeout(() => {
+      if (!pacsPending) return;
+      setLauncherModule(modalityToModule(pacsPending.modality));
+      setStage("module");
+    }, 0);
+    return () => clearTimeout(t);
+  }, [pacsOpenAt, pacsPending]);
+
   /* collect real engine outputs for the report desk */
   const onEngineResult = useCallback((engineId: EngineId, result: EngineResult) => {
     setEngineResults((prev) => ({ ...prev, [engineId]: result }));
@@ -225,6 +245,7 @@ export function Workstation() {
             }}
             onResult={onEngineResult}
             results={engineResults}
+            pacsStudy={pacsPending}
           />
         </div>
         {showSplash && (
