@@ -2,6 +2,35 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  /* --------------------------------------------------------------------
+   * The /api/update/* routes read the package root at RUNTIME
+   * (BOALI_ROOT / process.cwd()). Next's output file tracer sees the
+   * process.cwd() literal and conservatively copies the whole project
+   * tree (mini-services weights, python runtime, …) into the standalone
+   * webapp/ folder — +2.2 GB and a >2 GB release zip GitHub rejects.
+   * None of those files belong inside webapp/ (the real ones live at
+   * the package root), so exclude them from tracing for every route.
+   * ------------------------------------------------------------------ */
+  outputFileTracingExcludes: {
+    "*": [
+      "./mini-services/**/*",
+      "./runtime/**/*",
+      "./weights/**/*",
+      "./public/samples/**/*",
+      "./tools/**/*",
+      "./windows/**/*",
+      "./logs/**/*",
+      "./.update/**/*",
+      "./upload/**/*",
+      "./download/**/*",
+      "./skills/**/*",
+      "./tool-results/**/*",
+      "./examples/**/*",
+      "./dev.log",
+      "./bun.lock",
+      "./tsconfig.tsbuildinfo",
+    ],
+  },
   /* allow the sandbox preview domain + local gateway origin to load dev
    * assets and keep the HMR socket alive (blocked HMR causes reload loops) */
   allowedDevOrigins: [
