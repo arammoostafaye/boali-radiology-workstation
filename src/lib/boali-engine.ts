@@ -19,6 +19,9 @@ export interface EngineStatus {
   weight_path: string | null;
   source_ref: string;
   message: string;
+  /** measured free RAM (bone-suppression engine) */
+  free_ram_mb?: number;
+  min_free_ram_mb?: number;
 }
 
 export interface EngineStatusResponse {
@@ -30,6 +33,26 @@ export interface EngineStatusResponse {
   note: string;
 }
 
+/* -------- structured bilingual reports (all engines) -------- */
+export interface ReportSection {
+  id: string;
+  title_en: string;
+  title_fa: string;
+  body_en: string;
+  body_fa: string;
+}
+
+export interface EngineReport {
+  generated_at?: string;
+  verdict_en?: string;
+  verdict_fa?: string;
+  verdict_color?: string;
+  sections: ReportSection[];
+  disclaimer_en?: string;
+  disclaimer_fa?: string;
+}
+
+/* -------- fracture (YOLO ONNX) -------- */
 export interface FractureFinding {
   box: [number, number, number, number];
   conf: number;
@@ -45,6 +68,7 @@ export interface FractureResult {
   findings: FractureFinding[];
   findings_count: number;
   annotated_image: string;
+  report?: EngineReport;
   source_ref: string;
   meta?: Record<string, unknown>;
 }
@@ -69,11 +93,26 @@ export interface Chest18Result {
   source_size: [number, number];
   findings: Chest18Finding[];
   findings_count: number;
+  report?: EngineReport;
   source_ref: string;
   meta?: Record<string, unknown>;
 }
 
 /* -------- bone suppression (4 decompositions) -------- */
+export interface BoneMetrics {
+  identity_check?: string;
+  identity_mean_abs_error?: number;
+  identity_pass?: boolean;
+  bone_signal_mean?: number;
+  soft_signal_mean?: number;
+  phase_bone_ms?: number;
+  phase_lung_ms?: number;
+  phase_bone_peak_rss_mb?: number;
+  phase_lung_peak_rss_mb?: number;
+  mode?: string;
+  [k: string]: unknown;
+}
+
 export interface BoneResult {
   engine: string;
   model_file: string;
@@ -81,6 +120,8 @@ export interface BoneResult {
   source_size: [number, number];
   findings: never[];
   findings_count: 0;
+  metrics?: BoneMetrics;
+  report?: EngineReport;
   images: {
     soft_tissue: string;
     bone: string;
@@ -92,12 +133,32 @@ export interface BoneResult {
 }
 
 /* -------- mammography (benign / malignant / normal) -------- */
+export interface MammoMetrics {
+  segmentation_ok?: boolean;
+  view_position?: string;
+  view_basis?: string;
+  breast_area_pct?: number;
+  dense_fraction?: number;
+  density_category?: "A" | "B" | "C" | "D";
+  density_category_desc?: string;
+  density_basis?: string;
+  exposure_mean?: number;
+  contrast_p90_p10?: number;
+  sharpness_lap_var?: number;
+  background_noise_std?: number;
+  background_pct?: number;
+  quality_flags?: string[];
+  [k: string]: unknown;
+}
+
 export interface MammoResult {
   engine: string;
   model_file: string;
   elapsed_ms: number;
   source_size: [number, number];
   probabilities: Record<string, number>;
+  metrics?: MammoMetrics;
+  report?: EngineReport;
   findings: never[];
   findings_count: 0;
   source_ref: string;
@@ -143,6 +204,7 @@ export interface Ct3dResult {
   };
   vr: { image: string; preset: Ct3dPreset };
   warnings: string[];
+  report?: EngineReport;
   findings: never[];
   findings_count: 0;
   source_ref: string;
@@ -315,4 +377,68 @@ export async function fetchSampleAsFile(path: string): Promise<File> {
   const blob = await res.blob();
   const name = path.split("/").pop() ?? "sample.png";
   return new File([blob], name, { type: blob.type || "image/png" });
+}
+
+/* ------------------------- QA / validation ------------------------- */
+
+export interface QaCheck {
+  name: string;
+  expected: string;
+  measured: string;
+  pass: boolean;
+  skipped?: boolean;
+}
+
+export interface QaEngineResult {
+  engine: string;
+  status: string;
+  name: string;
+  detail: string;
+  checks: QaCheck[];
+  elapsed_ms: number | null;
+}
+
+export interface QaSelftestResult {
+  service: string;
+  suite: string;
+  started_at: string;
+  elapsed_ms: number;
+  summary: {
+    checks_total: number;
+    checks_passed: number;
+    checks_failed: number;
+    checks_skipped?: number;
+    all_passed: boolean;
+  };
+  engines: QaEngineResult[];
+  note: string;
+}
+
+/** Run the invariant-check suite (صحت‌سنجی) on every ready engine. */
+export async function runQaSelftest(
+  includeBone = true
+): Promise<QaSelftestResult> {
+  const form = new FormData();
+  form.append("include_bone", String(includeBone));
+  const res = await fetch(`/api/qa/selftest?XTransformPort=${ENGINE_PORT}`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    let detail = `Engine returned ${res.status}`;
+    try {
+      const body = await res.json();
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {
+      /* keep default */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as QaSelftestResult;
+}
+
+/** Download URL for the full-resolution 3D output bundle (ZIP). */
+export function ct3dExportUrl(volumeId: string, preset: Ct3dPreset = "bone"): string {
+  const q = new URLSearchParams({ volume_id: volumeId, preset });
+  return `/api/ct3d/export?${q.toString()}&XTransformPort=${ENGINE_PORT}`;
 }

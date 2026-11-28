@@ -13,13 +13,16 @@ Status is real: if pydicom/scipy are absent the engine reports deps_missing.
 
 from __future__ import annotations
 
+import datetime
 import glob
 import io
+import json
 import math
 import os
 import threading
 import time
 import uuid
+import zipfile
 
 import numpy as np
 
@@ -30,7 +33,12 @@ ENGINE_NAME = "3D CT Studio (MPR + volume rendering)"
 SOURCE_REF = "new engine — numpy MPR + scipy ray-cast DVR"
 
 SERVICE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SAMPLE_SERIES_DIR = os.path.join(SERVICE_ROOT, "samples", "CT-chest")
+SAMPLE_SERIES_DIRS = [
+    # contiguous synthetic phantom first (renders a clean rib cage);
+    # the original sparse "patient11/SPC" series stays as fallback
+    os.path.join(SERVICE_ROOT, "samples", "CT-chest-synth"),
+    os.path.join(SERVICE_ROOT, "samples", "CT-chest"),
+]
 
 _lock = threading.Lock()
 
@@ -69,7 +77,8 @@ def status() -> dict:
             "message": "pydicom / scipy / opencv missing. Install them to enable "
             "the 3D CT studio.",
         }
-    has_sample = bool(glob.glob(os.path.join(SAMPLE_SERIES_DIR, "*.dcm")))
+    has_sample = bool(glob.glob(os.path.join(SAMPLE_SERIES_DIRS[0], "*.dcm"))
+                      or glob.glob(os.path.join(SAMPLE_SERIES_DIRS[1], "*.dcm")))
     return {
         "engine": ENGINE_ID,
         "name": ENGINE_NAME,
@@ -235,14 +244,15 @@ def clear_cache() -> None:
 
 
 def _load_sample_entries() -> list[tuple[bytes, str]]:
-    files = sorted(glob.glob(os.path.join(SAMPLE_SERIES_DIR, "*.dcm")))
-    if not files:
-        raise ValueError("No bundled sample CT series found.")
-    out = []
-    for f in files:
-        with open(f, "rb") as fh:
-            out.append((fh.read(), os.path.basename(f)))
-    return out
+    for d in SAMPLE_SERIES_DIRS:
+        files = sorted(glob.glob(os.path.join(d, "*.dcm")))
+        if files:
+            out = []
+            for f in files:
+                with open(f, "rb") as fh:
+                    out.append((fh.read(), os.path.basename(f)))
+            return out
+    raise ValueError("No bundled sample CT series found.")
 
 
 # ------------------------- cache helpers -------------------------
@@ -254,7 +264,7 @@ def _purge_cache() -> None:
         _cache.pop(k, None)
 
 
-def _store_volume(vol, spacing, meta) -> str:
+def _store_volume(vol, spacing, meta, warnings: list[str] | None = None) -> str:
     vid = "ct_" + uuid.uuid4().hex[:10]
     with _lock:
         _purge_cache()
@@ -262,6 +272,7 @@ def _store_volume(vol, spacing, meta) -> str:
             "vol": vol,
             "spacing": spacing,
             "meta": meta,
+            "warnings": warnings or [],
             "last_access": time.time(),
         }
     return vid
@@ -491,6 +502,173 @@ def _render_vr(vol: np.ndarray, spacing: tuple[float, float, float],
     return "data:image/png;base64," + base64.b64encode(buf.tobytes()).decode("ascii")
 
 
+# ------------------------- structured report -------------------------
+
+def _build_report(meta: dict, stats: dict, warnings: list[str],
+                  used_sample: bool, preset: str) -> dict:
+    """Detailed bilingual (en/fa) volume report — measured values only."""
+    sp = stats.get("spacing_mm", [0, 0, 0])
+    dim = (f"{stats.get('slices', 0)} slices × {meta.get('rows', '?')}×"
+           f"{meta.get('cols', '?')} px, spacing {sp[0]:.2f}×{sp[1]:.2f}×"
+           f"{sp[2]:.2f} mm")
+    name = meta.get("patient_name") or "sample series"
+    warn_en = "; ".join(warnings) if warnings else "none"
+    warn_fa = ("؛ ".join(warnings) if warnings else "هیچ")
+
+    def sec(i, t_en, t_fa, b_en, b_fa):
+        return {"id": i, "title_en": t_en, "title_fa": t_fa,
+                "body_en": b_en, "body_fa": b_fa}
+
+    return {
+        "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "sections": [
+            sec("technique", "Technique", "تکنیک",
+                f"CT volume reconstruction from DICOM series — {name}. "
+                f"{dim}. Source: "
+                + ("bundled sample series." if used_sample else
+                   f"{meta.get('slice_count_acquired', '?')} uploaded slices."),
+                f"بازسازی حجمی CT از سری DICOM — {name}. {dim}. منبع: "
+                + ("سری نمونه داخلی." if used_sample else
+                   f"{meta.get('slice_count_acquired', '?')} برش بارگذاری‌شده.")),
+            sec("reconstruction", "Reconstruction Quality", "کیفیت بازسازی",
+                f"Voxel grid resampled onto a uniform z-axis; volume "
+                f"{stats.get('voxels', 0) / 1e6:.1f}M voxels, HU range "
+                f"{stats.get('hu_min', 0)} … {stats.get('hu_max', 0)} "
+                f"(mean {stats.get('hu_mean', 0)}), body-volume estimate "
+                f"{stats.get('body_volume_ml', 0)} ml (all voxels > -300 HU). "
+                f"Acquisition warnings: {warn_en}.",
+                f"شبکه وکسل روی محور z یکنواخت بازنمونه‌گیری شد؛ حجم "
+                f"{stats.get('voxels', 0) / 1e6:.1f} میلیون وکسل، بازه HU "
+                f"{stats.get('hu_min', 0)} تا {stats.get('hu_max', 0)} "
+                f"(میانگین {stats.get('hu_mean', 0)})، برآورد حجم بدن "
+                f"{stats.get('body_volume_ml', 0)} میلی‌لیتر (وکسل‌های "
+                f"بالاتر از -۳۰۰HU). هشدارهای اکتساب: {warn_fa}."),
+            sec("outputs", "Rendered Outputs", "خروجی‌های رندرشده",
+                f"Interactive MPR in axial/coronal/sagittal planes (lung, "
+                f"soft-tissue and bone windows) + ray-cast volume rendering "
+                f"('{preset}' preset, front-to-back alpha compositing with "
+                f"gradient shading). Full-resolution PNG set exportable as "
+                f"a ZIP from the studio view.",
+                f"MPR تعاملی در سطوح اگزیال/کرونال/ساجیتال (پنجره‌های "
+                f"ریه، بافت نرم و استخوان) + رندر حجمی ری‌کست (پریست "
+                f"'{preset}'، ترکیب آلفا جلو-به-عقب با سایه‌گذاری گرادیان). "
+                f"مجموعه PNG با کیفیت کامل به‌صورت ZIP قابل خروجی گرفتن "
+                f"است."),
+            sec("limitations", "Limitations", "محدودیت‌ها",
+                "Geometric reconstruction only — no diagnostic inference is "
+                "performed on the volume. Gaps in the acquired series are "
+                "rendered as air, never interpolated anatomy.",
+                "صرفاً بازسازی هندسی — هیچ استنتاج تشخیصی روی حجم انجام "
+                "نمی‌شود. شکاف‌های سری اکتسابی به‌صورت هوا رندر می‌شوند، "
+                "هرگز آناتومی جعل‌شده نیست."),
+        ],
+        "disclaimer_en": (
+            "Research/education visualization. A licensed radiologist must "
+            "review all reconstructed images before clinical use."
+        ),
+        "disclaimer_fa": (
+            "نمایش‌سازی برای پژوهش/آموزش. بررسی همه تصاویر بازسازی‌شده "
+            "توسط رادیولوژیست پیش از استفاده بالینی الزامی است."
+        ),
+    }
+
+
+# ------------------------- ZIP export -------------------------
+
+def export_zip(volume_id: str, preset: str = "bone") -> bytes:
+    """Full-resolution output bundle for a cached volume:
+    high-res VR renders (both presets), the three MPR center slices in
+    all three windows, an axial montage, volume-stats.json and a text
+    report. Everything re-rendered at export resolution — no upscaling."""
+    import cv2
+
+    entry = _get_volume(volume_id)
+    if entry is None:
+        raise KeyError("volume not found or expired — reload the series")
+    vol, spacing, meta = entry["vol"], entry["spacing"], entry["meta"]
+    nz, ny, nx = vol.shape
+    if preset not in ("bone", "soft"):
+        preset = "bone"
+
+    body_mask = vol > -300
+    vox_ml = (spacing[0] * spacing[1] * spacing[2]) / 1000.0
+    stats = {
+        "slices": int(nz),
+        "voxels": int(vol.size),
+        "hu_min": round(float(vol.min()), 1),
+        "hu_max": round(float(vol.max()), 1),
+        "hu_mean": round(float(vol.mean()), 1),
+        "body_volume_ml": round(float(body_mask.sum() * vox_ml), 1),
+        "spacing_mm": [round(s, 3) for s in spacing],
+    }
+
+    def png_bytes(data_url: str) -> bytes:
+        import base64
+        return base64.b64decode(data_url.split(",", 1)[1])
+
+    files: list[tuple[str, bytes]] = []
+
+    # 1) high-res VR — both presets so the radiologist can compare
+    files.append((f"VR-{preset}-768px.png",
+                  png_bytes(_render_vr(vol, spacing, preset=preset, out_px=768))))
+    other = "soft" if preset == "bone" else "bone"
+    files.append((f"VR-{other}-768px.png",
+                  png_bytes(_render_vr(vol, spacing, preset=other, out_px=768))))
+
+    # 2) MPR center slices — three planes × three windows, 1024 px
+    for plane, count in (("axial", nz), ("coronal", ny), ("sagittal", nx)):
+        for window in ("lung", "soft", "bone"):
+            img = render_slice(vol, spacing, plane, count // 2 + 1, window,
+                               max_px=1024)
+            files.append((f"MPR-{plane}-center-{window}.png", png_bytes(img)))
+
+    # 3) axial montage (12 evenly spaced, lung window)
+    n_prev = min(12, nz)
+    idxs = [int(round((i + 1) * nz / n_prev)) for i in range(n_prev)]
+    tiles = [
+        cv2.imdecode(
+            np.frombuffer(png_bytes(
+                render_slice(vol, spacing, "axial", i, "lung", max_px=320)
+            ), np.uint8), cv2.IMREAD_COLOR)
+        for i in idxs
+    ]
+    th, tw = tiles[0].shape[:2]
+    cols = 4
+    rows = (len(tiles) + cols - 1) // cols
+    canvas = np.zeros((rows * th, cols * tw, 3), dtype=np.uint8)
+    for k, tile in enumerate(tiles):
+        r, c = divmod(k, cols)
+        h, w = tile.shape[:2]
+        canvas[r * th:r * th + h, c * tw:c * tw + w] = tile
+    ok, buf = cv2.imencode(".png", canvas)
+    if ok:
+        files.append(("axial-montage-12.png", buf.tobytes()))
+
+    # 4) machine-readable stats
+    files.append(("volume-stats.json", json.dumps(
+        {"volume_id": volume_id, "meta": meta, "stats": stats,
+         "warnings": entry.get("warnings", [])},
+        indent=2, default=str).encode("utf-8")))
+
+    # 5) human-readable text report (bilingual)
+    rep = _build_report(meta, stats, entry.get("warnings", []),
+                        bool(meta.get("used_sample", False)), preset)
+    lines = ["BOALI 3D CT STUDIO — OUTPUT REPORT", "=" * 48, ""]
+    for s in rep["sections"]:
+        lines += [s["title_en"], "-" * len(s["title_en"]), s["body_en"], ""]
+    lines += ["کیفیت بازسازی (فارسی)", "-" * 18,
+              rep["sections"][1]["body_fa"], ""]
+    lines += [rep["disclaimer_en"], rep["disclaimer_fa"]]
+    files.append(("report.txt", "\n".join(lines).encode("utf-8")))
+
+    # pack
+    bio = io.BytesIO()
+    with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in files:
+            zf.writestr(name, data)
+    return bio.getvalue()
+
+
 # ------------------------- main entry -------------------------
 
 def analyze(file_entries: list[tuple[bytes, str]] | None,
@@ -503,7 +681,8 @@ def analyze(file_entries: list[tuple[bytes, str]] | None,
         used_sample = True
 
     vol, spacing, meta, warnings = _build_volume(file_entries)
-    vid = _store_volume(vol, spacing, meta)
+    meta["used_sample"] = used_sample
+    vid = _store_volume(vol, spacing, meta, warnings)
     nz, ny, nx = vol.shape
 
     # axial previews (lung window, evenly spaced)
@@ -523,6 +702,17 @@ def analyze(file_entries: list[tuple[bytes, str]] | None,
     vox_ml = (spacing[0] * spacing[1] * spacing[2]) / 1000.0  # mm³ → ml
     dt_ms = (time.time() - t0) * 1000
 
+    stats = {
+        "slices": int(nz),
+        "voxels": int(vol.size),
+        "hu_min": round(float(vol.min()), 1),
+        "hu_max": round(float(vol.max()), 1),
+        "hu_mean": round(float(vol.mean()), 1),
+        "body_volume_ml": round(float(body_mask.sum() * vox_ml), 1),
+        "spacing_mm": [round(s, 3) for s in spacing],
+    }
+    report = _build_report(meta, stats, warnings, used_sample, preset)
+
     return {
         "engine": ENGINE_ID,
         "model_file": "MPR + ray-cast DVR (no weights)",
@@ -532,15 +722,8 @@ def analyze(file_entries: list[tuple[bytes, str]] | None,
         "used_sample": used_sample,
         "preset": preset,
         "meta": meta,
-        "stats": {
-            "slices": int(nz),
-            "voxels": int(vol.size),
-            "hu_min": round(float(vol.min()), 1),
-            "hu_max": round(float(vol.max()), 1),
-            "hu_mean": round(float(vol.mean()), 1),
-            "body_volume_ml": round(float(body_mask.sum() * vox_ml), 1),
-            "spacing_mm": [round(s, 3) for s in spacing],
-        },
+        "stats": stats,
+        "report": report,
         "planes": {
             "axial": {
                 "count": int(nz),

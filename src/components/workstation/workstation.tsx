@@ -232,7 +232,7 @@ export function Workstation() {
   /* -------- dedicated module environment stage -------- */
   if (stage === "module" && launcherModule) {
     const workstationModule =
-      launcherModule === "report" ? "fracture" : launcherModule;
+      launcherModule === "report" || launcherModule === "qa" ? "fracture" : launcherModule;
     return (
       <>
         <div className="flex h-screen w-full flex-col overflow-hidden bg-[#0B121D]">
@@ -454,6 +454,8 @@ export function Workstation() {
         onOpenChange={setReportOpen}
         patient={patient}
         module={activeModule}
+        results={engineResults}
+        engineId={ENGINE_BY_MODULE[activeModuleId]}
       />
     </div>
   );

@@ -16,7 +16,7 @@ import {
   type EngineStatusResponse,
 } from "@/lib/boali-engine";
 
-export type LauncherModuleId = "fracture" | "bone" | "chest18" | "mammo" | "studio" | "report";
+export type LauncherModuleId = "fracture" | "bone" | "chest18" | "mammo" | "studio" | "report" | "qa";
 
 interface LauncherCard {
   moduleId: LauncherModuleId;
@@ -76,6 +76,14 @@ const CARDS: LauncherCard[] = [
     image: "/cards/card_cyber_report.png",
     engineId: null,
     accent: "#facc15",
+  },
+  {
+    moduleId: "qa",
+    title: "Validation · صحت‌سنجی",
+    subtitle: "Invariant self-test across all engines",
+    image: "/cards/card_cyber_qa_validation.png",
+    engineId: "qa",
+    accent: "#4ade80",
   },
 ];
 

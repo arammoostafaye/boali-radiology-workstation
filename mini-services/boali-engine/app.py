@@ -27,7 +27,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from engines import bone, chest18, ct3d, fracture, mammo
+from engines import bone, chest18, ct3d, fracture, mammo, qa
 from engines import memwatch
 from engines.common import read_medical_image
 
@@ -75,7 +75,7 @@ def root() -> dict:
 
 @app.get("/api/status")
 def engine_status() -> dict:
-    engines = [fracture.status(), bone.status(), chest18.status(), mammo.status(), ct3d.status()]
+    engines = [fracture.status(), bone.status(), chest18.status(), mammo.status(), ct3d.status(), qa.status()]
     return {
         "service": "boali-engine",
         "uptime_sec": round(time.time() - _STARTED_AT),
@@ -187,7 +187,7 @@ async def analyze_mammo(
         raise _engine_error(st)
     arr, meta = await _load_image(file, auto_invert)
     try:
-        result = await run_in_threadpool(mammo.analyze, arr)
+        result = await run_in_threadpool(mammo.analyze, arr, meta)
     except Exception as e:
         raise HTTPException(500, f"Inference failed: {e}")
     result["meta"] = meta
@@ -270,3 +270,41 @@ async def ct3d_vr(
         )
     except KeyError as e:
         raise HTTPException(404, str(e))
+
+
+@app.get("/api/ct3d/export")
+async def ct3d_export(volume_id: str, preset: str = "bone"):
+    """Full-resolution output bundle (ZIP): both VR presets at 768 px,
+    MPR center slices in all windows at 1024 px, axial montage,
+    volume-stats.json and a bilingual text report."""
+    memwatch.touch()
+    try:
+        zip_bytes = await run_in_threadpool(ct3d.export_zip, volume_id, preset)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"Export failed: {e}")
+    from fastapi.responses import Response
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="boali-ct3d-{volume_id}.zip"',
+            "Content-Length": str(len(zip_bytes)),
+        },
+    )
+
+
+# ---------------------------- QA / validation ----------------------------
+
+
+@app.post("/api/qa/selftest")
+async def qa_selftest(include_bone: bool = Form(True)):
+    """Run the invariant-check suite over every ready engine (صحت‌سنجی).
+    Sequential and RAM-aware; can take 1-3 minutes with torch engines."""
+    memwatch.touch()
+    try:
+        return await run_in_threadpool(qa.run_selftest, bool(include_bone))
+    except Exception as e:
+        raise HTTPException(500, f"QA suite failed: {e}")

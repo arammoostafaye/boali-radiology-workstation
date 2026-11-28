@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 
 from .common import annotated_png, find_weight_file
+from .reporting import RESEARCH_DISCLAIMER, now_str, sec
 
 # Verbatim from BoneSuppression_Desktop.py:3768-3770 (ortho/auto choice)
 MODEL_CANDIDATES = ["fracture_ortho.onnx", "fracture_yolo11.onnx", "fracture_yolov8.onnx"]
@@ -140,6 +141,8 @@ def analyze(arr01: np.ndarray, conf_thresh: float = 0.08, use_clahe: bool = True
     findings.sort(key=lambda x: x["conf"], reverse=True)
     dt_ms = (time.time() - t0) * 1000
 
+    report = _build_report(findings, conf_thresh, dt_ms, w, h)
+
     return {
         "engine": ENGINE_ID,
         "model_file": _loaded_path.split("/")[-1],
@@ -150,6 +153,108 @@ def analyze(arr01: np.ndarray, conf_thresh: float = 0.08, use_clahe: bool = True
         "clahe": use_clahe,
         "findings": findings,
         "findings_count": len(findings),
+        "report": report,
         "annotated_image": annotated_png(arr01, findings),
         "source_ref": SOURCE_REF,
+    }
+
+
+_REGIONS = {
+    # (English, Persian) anatomical image-region descriptors — positional,
+    # honestly derived from the box centre; NOT anatomic name identification.
+    "upper third": ("upper third of the image", "یک‌سوم بالایی تصویر"),
+    "middle third": ("middle third of the image", "یک‌سوم میانی تصویر"),
+    "lower third": ("lower third of the image", "یک‌سوم پایینی تصویر"),
+    "left": ("left side of the image", "سمت چپ تصویر"),
+    "centre": ("central zone", "ناحیه مرکزی"),
+    "right": ("right side of the image", "سمت راست تصویر"),
+}
+
+
+def _region_of(box: list[int], w: int, h: int) -> tuple[str, str]:
+    x1, y1, x2, y2 = box
+    cx, cy = (x1 + x2) / 2.0 / w, (y1 + y2) / 2.0 / h
+    vert = ("upper third" if cy < 1 / 3 else
+            "middle third" if cy < 2 / 3 else "lower third")
+    horiz = ("left" if cx < 0.40 else "centre" if cx < 0.60 else "right")
+    return _REGIONS[vert], _REGIONS[horiz]
+
+
+def _build_report(findings: list[dict], conf_thresh: float,
+                  dt_ms: float, w: int, h: int) -> dict:
+    """Detailed bilingual report — boxes, confidences and measured regions."""
+    if findings:
+        lines_en, lines_fa = [], []
+        for i, f in enumerate(findings, 1):
+            (ve, vf), (he, hf) = _region_of(f["box"], w, h)
+            x1, y1, x2, y2 = f["box"]
+            size_mm = "unknown (no pixel-spacing metadata)"
+            lines_en.append(
+                f"Region {i}: bounding box [{x1}, {y1}, {x2}, {y2}] px, "
+                f"{ve} / {he}, model confidence {f['conf'] * 100:.1f}% "
+                f"(absolute pixel size {size_mm})."
+            )
+            lines_fa.append(
+                f"ناحیه {i}: کادر [{x1}، {y1}، {x2}، {y2}] پیکسل، {vf} / {hf}، "
+                f"اطمینان مدل {f['conf'] * 100:.1f}٪."
+            )
+        find_en = (
+            f"{len(findings)} suspicious region(s) above the confidence "
+            f"threshold {conf_thresh:.2f} (NMS 0.40). " + " ".join(lines_en)
+        )
+        find_fa = (
+            f"{len(findings)} ناحیه مشکوک بالاتر از آستانه اطمینان "
+            f"{conf_thresh:.2f} (NMS ۰٫۴۰). " + " ".join(lines_fa)
+        )
+        imp_en = (f"Positive fracture-pattern detection(s): {len(findings)}. "
+                  f"Correlate with clinical examination and dedicated views; "
+                  f"CT is advised when management depends on fragment "
+                  f"displacement.")
+        imp_fa = (f"تشخیص الگوی شکستگی مثبت: {len(findings)} مورد. "
+                  f"همبستگی با معاینه بالینی و نماهای اختصاصی؛ در صورت "
+                  f"وابستگی درمان به جابجایی قطعات، CT توصیه می‌شود.")
+    else:
+        find_en = (
+            f"No region crossed the detection threshold (conf ≥ "
+            f"{conf_thresh:.2f}, NMS 0.40) on this radiograph. The model "
+            f"cannot exclude subtle non-displaced fractures — correlate "
+            f"clinically."
+        )
+        find_fa = (
+            f"هیچ ناحیه‌ای آستانه تشخیص (اطمینان ≥ {conf_thresh:.2f}) را "
+            f"رد نکرد. مدل نمی‌تواند شکستگی‌های ظریف بدون جابجایی را "
+            f"قطعاً رد کند — همبستگی بالینی لازم است."
+        )
+        imp_en = ("No fracture pattern detected by the model at the "
+                  "configured threshold.")
+        imp_fa = ("الگوی شکستگی توسط مدل در آستانه تنظیم‌شده تشخیص "
+                  "داده نشد.")
+
+    return {
+        "generated_at": now_str(),
+        "sections": [
+            sec("technique", "Technique", "تکنیک",
+                f"Multi-anatomy fracture detection (YOLO ONNX, 640×640 blob, "
+                f"CLAHE 2.5/8×8 preprocessing, NMS 0.40, conf ≥ "
+                f"{conf_thresh:.2f}) on a {w}×{h} px radiograph. Inference "
+                f"{dt_ms:.0f} ms on CPU.",
+                f"تشخیص شکستگی چندآناتومیک (YOLO ONNX، بلاب ۶۴۰×۶۴۰، "
+                f"پیش‌پردازش CLAHE، NMS ۰٫۴۰، آستانه {conf_thresh:.2f}) روی "
+                f"رادیوگرافی {w}×{h} پیکسل. استنتاج {dt_ms:.0f} "
+                f"میلی‌ثانیه."),
+            sec("findings", "Findings", "یافته‌ها", find_en, find_fa),
+            sec("impression", "Impression", "جمع‌بندی", imp_en, imp_fa),
+            sec("limitations", "Limitations", "محدودیت‌ها",
+                "Region descriptions are image-positional (image left/right), "
+                "not laterality-verified anatomy. Without pixel-spacing "
+                "metadata, box sizes are in pixels only. The annotated image "
+                "shows every detection — verify each visually before "
+                "accepting.",
+                "توصیف نواحی بر اساس موقعیت تصویری است (چپ/راست تصویر)، نه "
+                "طرفیت آناتومیک تأییدشده. بدون متادیتای فاصله پیکسلی، "
+                "اندازه کادرها فقط به پیکسل است. تصویر annotat شده همه "
+                "تشخیص‌ها را نشان می‌دهد — پیش از پذیرش، هر مورد را "
+                "بصری تأیید کنید."),
+        ],
+        **RESEARCH_DISCLAIMER,
     }

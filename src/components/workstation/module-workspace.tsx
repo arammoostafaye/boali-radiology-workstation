@@ -28,6 +28,7 @@ import {
   Plus,
   Printer,
   RotateCcw,
+  ShieldCheck,
   Stethoscope,
   Upload,
 } from "lucide-react";
@@ -49,12 +50,14 @@ import {
   type MammoResult,
 } from "@/lib/boali-engine";
 import { Ct3dStudioView } from "./ct3d-studio";
+import { EngineReportView } from "./engine-report-view";
 import type { LauncherModuleId } from "./module-launcher";
 import {
   fetchPacsDicomFile,
   modalityToModule,
   type PacsPendingStudy,
 } from "@/lib/pacs-study-store";
+import { runQaSelftest, type QaSelftestResult } from "@/lib/boali-engine";
 
 /* ----------------------------- registry ----------------------------- */
 
@@ -149,6 +152,17 @@ export const MODULES: ModuleMeta[] = [
     icon: ClipboardList,
     accent: "#facc15",
     accentSoft: "rgba(250,204,21,0.10)",
+    engineId: null,
+    samples: [],
+  },
+  {
+    id: "qa",
+    title: "Validation & QA",
+    room: "VALIDATION LAB",
+    subtitle: "صحت‌سنجی · invariant self-test across all five engines",
+    icon: ShieldCheck,
+    accent: "#4ade80",
+    accentSoft: "rgba(74,222,128,0.12)",
     engineId: null,
     samples: [],
   },
@@ -744,6 +758,7 @@ function BoneLab({ run }: { run: EngineRunState }) {
   const r = run.result as BoneResult | null;
   const res = r && r.engine === "bone-suppression" ? r : null;
   const [spot, setSpot] = useState<keyof BoneResult["images"]>("soft_tissue");
+  const m = res?.metrics;
 
   const PANELS = [
     ["soft_tissue", "Soft tissue · bone removed"],
@@ -755,7 +770,7 @@ function BoneLab({ run }: { run: EngineRunState }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
       {run.error && <ErrorBanner error={run.error} />}
-      {run.running && <RunningBar label="Running Qure TorchScript decomposition…" accent={meta.accent} />}
+      {run.running && <RunningBar label="Running Qure TorchScript decomposition (two-phase, subprocess-isolated)…" accent={meta.accent} />}
 
       {!res ? (
         !run.running &&
@@ -764,7 +779,7 @@ function BoneLab({ run }: { run: EngineRunState }) {
             accent={meta.accent}
             icon={Activity}
             line="Load a chest X-ray to decompose into 4 tissue images"
-            hint="The Qure TorchScript model separates soft tissue, bone, lung fields and non-lung soft tissue — exactly the four outputs of the desktop BoneSuppression engine."
+            hint="The Qure TorchScript model separates soft tissue, bone, lung fields and non-lung soft tissue — exactly the four outputs of the desktop BoneSuppression engine. Each 420 MB trace runs in its own subprocess so the service never dies from OOM."
           />
         )
       ) : (
@@ -799,52 +814,66 @@ function BoneLab({ run }: { run: EngineRunState }) {
                     original
                   </figcaption>
                 </figure>
-                <div className="flex flex-col justify-center px-2 text-[9.5px] leading-relaxed text-[#5a6e82]">
-                  TorchScript decomposition runs on the full-resolution image; previews are
-                  re-encoded PNG of the actual model outputs.
+                <div className="flex flex-col justify-center gap-1 px-2 text-[9.5px] leading-relaxed text-[#5a6e82]">
+                  {m?.identity_pass != null && (
+                    <span className={m.identity_pass ? "text-[#4ade80]" : "text-[#f87171]"}>
+                      ✓ self-check: soft + bone = original (mean |err| {" "}
+                      {m.identity_mean_abs_error?.toExponential(1)})
+                    </span>
+                  )}
+                  {m?.phase_bone_peak_rss_mb != null && (
+                    <span>
+                      peak RAM: bone {m.phase_bone_peak_rss_mb} MB · lung{" "}
+                      {m.phase_lung_peak_rss_mb} MB (subprocess)
+                    </span>
+                  )}
                 </div>
               </div>
             )}
             <MetaChips result={res} />
           </section>
 
-          {/* 2x2 light table */}
+          {/* 2x2 light table + verification + report */}
           <section
-            className="grid min-h-0 flex-1 grid-cols-1 gap-2.5 sm:grid-cols-2"
-            aria-label="Decomposition light table"
+            className="scroll-dark flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto"
+            aria-label="Decomposition light table and report"
           >
-            {PANELS.map(([key, label], i) => (
-              <motion.button
-                key={key}
-                type="button"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.05 * i }}
-                onClick={() => setSpot(key)}
-                aria-pressed={spot === key}
-                className={`group relative overflow-hidden rounded-xl border bg-black text-left transition-all ${
-                  spot === key ? "border-[#2dd4bf]/70" : "border-[#253548] hover:border-[#3a5a7d]"
-                }`}
-                style={spot === key ? { boxShadow: `0 0 22px ${meta.accent}30` } : undefined}
-              >
-                <img
-                  src={res.images[key]}
-                  alt={`Real model output: ${label}`}
-                  className="h-full min-h-[130px] w-full object-contain"
-                />
-                <figcaption
-                  className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/70 px-2 py-1 text-[9.5px] text-[#c3cedb] backdrop-blur-sm"
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              {PANELS.map(([key, label], i) => (
+                <motion.button
+                  key={key}
+                  type="button"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.05 * i }}
+                  onClick={() => setSpot(key)}
+                  aria-pressed={spot === key}
+                  className={`group relative overflow-hidden rounded-xl border bg-black text-left transition-all ${
+                    spot === key ? "border-[#2dd4bf]/70" : "border-[#253548] hover:border-[#3a5a7d]"
+                  }`}
+                  style={spot === key ? { boxShadow: `0 0 22px ${meta.accent}30` } : undefined}
                 >
-                  {label}
-                  <span
-                    className="rounded-full px-1.5 text-[8.5px] font-bold"
-                    style={{ background: `${meta.accent}22`, color: meta.accent }}
+                  <img
+                    src={res.images[key]}
+                    alt={`Real model output: ${label}`}
+                    className="h-full min-h-[130px] w-full object-contain"
+                  />
+                  <figcaption
+                    className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/70 px-2 py-1 text-[9.5px] text-[#c3cedb] backdrop-blur-sm"
                   >
-                    {spot === key ? "SPOT" : "VIEW"}
-                  </span>
-                </figcaption>
-              </motion.button>
-            ))}
+                    {label}
+                    <span
+                      className="rounded-full px-1.5 text-[8.5px] font-bold"
+                      style={{ background: `${meta.accent}22`, color: meta.accent }}
+                    >
+                      {spot === key ? "SPOT" : "VIEW"}
+                    </span>
+                  </figcaption>
+                </motion.button>
+              ))}
+            </div>
+
+            {res.report && <EngineReportView report={res.report} accent={meta.accent} />}
           </section>
         </div>
       )}
@@ -1004,6 +1033,7 @@ function MammoSuite({ run }: { run: EngineRunState }) {
   const meta = MODULES[3];
   const r = run.result as MammoResult | null;
   const res = r && r.engine === "mammography" ? r : null;
+  const m = res?.metrics;
 
   const probs = useMemo(
     () =>
@@ -1027,6 +1057,42 @@ function MammoSuite({ run }: { run: EngineRunState }) {
         ? "#4ade80"
         : "#7dd3fc"
     : "#8fa3b8";
+
+  const metricCards: { k: string; v: string; note?: string; tone?: string }[] = m
+    ? [
+        {
+          k: "View",
+          v: m.view_position ?? "—",
+          note: m.view_basis,
+        },
+        {
+          k: "Density (est.)",
+          v: m.density_category ? `${m.density_category} · ${Math.round((m.dense_fraction ?? 0) * 100)}%` : "—",
+          note: m.density_category_desc,
+          tone: m.density_category === "D" ? "#facc15" : undefined,
+        },
+        {
+          k: "Breast area",
+          v: m.breast_area_pct != null ? `${m.breast_area_pct}%` : "—",
+          note: "of image frame",
+        },
+        {
+          k: "Exposure",
+          v: m.exposure_mean != null ? m.exposure_mean.toFixed(2) : "—",
+          note: "mean signal in breast",
+        },
+        {
+          k: "Contrast",
+          v: m.contrast_p90_p10 != null ? m.contrast_p90_p10.toFixed(2) : "—",
+          note: "p90 − p10",
+        },
+        {
+          k: "Sharpness",
+          v: m.sharpness_lap_var != null ? m.sharpness_lap_var.toFixed(0) : "—",
+          note: "Laplacian variance",
+        },
+      ]
+    : [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-3 lg:flex-row">
@@ -1055,20 +1121,20 @@ function MammoSuite({ run }: { run: EngineRunState }) {
               accent={meta.accent}
               icon={Droplets}
               line="Load a mammogram (3 sample DICOMs available)"
-              hint="ResNet-50 outputs calibrated triage probabilities. BI-RADS assignment stays with the radiologist — the model never fabricates a classification."
+              hint="ResNet-50 triage + measured density/quality metrics + a detailed bilingual structured report — not just a percentage."
             />
           )}
         </div>
         {res && <MetaChips result={res} />}
       </section>
 
-      {/* right: verdict + probabilities */}
+      {/* right: verdict + probabilities + metrics + detailed report */}
       <section
-        className="flex min-h-0 flex-col gap-2.5 rounded-2xl border border-[#253548] bg-[#0d1622] p-3 lg:w-[54%]"
-        aria-label="Triage verdict"
+        className="scroll-dark flex min-h-0 flex-col gap-2.5 overflow-y-auto rounded-2xl border border-[#253548] bg-[#0d1622] p-3 lg:w-[54%]"
+        aria-label="Triage verdict and detailed report"
       >
         {run.error && <ErrorBanner error={run.error} />}
-        {run.running && <RunningBar label="Running ResNet-50…" accent={meta.accent} />}
+        {run.running && <RunningBar label="Running ResNet-50 + measuring image metrics…" accent={meta.accent} />}
 
         {res && top ? (
           <>
@@ -1137,10 +1203,56 @@ function MammoSuite({ run }: { run: EngineRunState }) {
                 );
               })}
             </div>
-            <p className="text-[10px] leading-relaxed text-[#5a6e82]">
-              Probabilities only — BI-RADS assignment stays with the radiologist (no fabricated
-              classification).
-            </p>
+
+            {/* measured metrics grid */}
+            {m?.segmentation_ok && (
+              <div>
+                <p className="mb-1.5 text-[11px] font-bold tracking-widest" style={{ color: meta.accent }}>
+                  MEASURED IMAGE METRICS · متریک‌های اندازه‌گیری‌شده
+                </p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {metricCards.map((c) => (
+                    <div key={c.k} className="rounded-xl bg-[#182430] px-2.5 py-2">
+                      <p className="text-[9px] font-semibold uppercase tracking-wider text-[#5a6e82]">
+                        {c.k}
+                      </p>
+                      <p
+                        className="font-mono text-[14px] font-bold"
+                        style={{ color: c.tone ?? "#c3cedb" }}
+                      >
+                        {c.v}
+                      </p>
+                      {c.note && (
+                        <p className="mt-0.5 truncate text-[8.5px] text-[#5a6e82]" title={c.note}>
+                          {c.note}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {m.quality_flags && m.quality_flags.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {m.quality_flags.map((f) => (
+                      <span
+                        key={f}
+                        className={`rounded-full px-2 py-0.5 text-[9.5px] ${
+                          f.includes("adequate")
+                            ? "bg-[#22c55e]/10 text-[#4ade80]"
+                            : "bg-[#eab308]/10 text-[#e3c76a]"
+                        }`}
+                      >
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* detailed bilingual structured report */}
+            {res.report && (
+              <EngineReportView report={res.report} accent={meta.accent} />
+            )}
           </>
         ) : (
           !run.running &&
@@ -1148,8 +1260,8 @@ function MammoSuite({ run }: { run: EngineRunState }) {
             <EmptyDrop
               accent={meta.accent}
               icon={Droplets}
-              line="Triage verdict appears here"
-              hint="Run one of the three bundled mammography DICOM samples (mammo-1/2/3.dcm) or upload your own study to see the live verdict ring."
+              line="Triage verdict + detailed report appears here"
+              hint="Run one of the three bundled mammography DICOM samples (mammo-1/2/3.dcm) or upload your own study — you get probabilities, measured density/quality metrics, findings, impression, recommendation and limitations in Persian + English."
             />
           )
         )}
@@ -1283,18 +1395,22 @@ function ReportDesk({ results }: ReportDeskProps) {
     const mm = results.mammography as MammoResult | undefined;
     if (mm && mm.engine === "mammography") {
       const top = Object.entries(mm.probabilities).sort((a, b) => b[1] - a[1])[0];
+      const dens = mm.metrics?.density_category
+        ? ` · density ${mm.metrics.density_category} (${Math.round((mm.metrics.dense_fraction ?? 0) * 100)}%)`
+        : "";
       out.push({
         module: "Mammography AI",
         accent: MODULES[3].accent,
-        text: `Top class: ${top[0]} at ${(top[1] * 100).toFixed(1)}% (${mm.elapsed_ms} ms). Probabilities only — BI-RADS assigned by radiologist.`,
+        text: `${top[0]} ${ (top[1] * 100).toFixed(1)}%${dens} — see detailed report below (${mm.elapsed_ms} ms). BI-RADS assigned by radiologist.`,
       });
     }
     const bn = results["bone-suppression"] as BoneResult | undefined;
     if (bn && bn.engine === "bone-suppression") {
+      const ident = bn.metrics?.identity_pass ? "identity verified" : "identity FAILED";
       out.push({
         module: "Bone Suppression",
         accent: MODULES[1].accent,
-        text: `4-tissue decomposition produced (soft tissue / bone / lung / non-lung soft) in ${bn.elapsed_ms} ms.`,
+        text: `4-tissue decomposition produced in ${bn.elapsed_ms} ms (soft/bone/lung/non-lung; ${ident}).`,
       });
     }
     const ct = results.ct3d as Ct3dResult | undefined;
@@ -1302,9 +1418,25 @@ function ReportDesk({ results }: ReportDeskProps) {
       out.push({
         module: "3D CT Studio",
         accent: MODULES[4].accent,
-        text: `Volume ${ct.stats.slices} slices, ${(ct.stats.voxels / 1e6).toFixed(1)}M voxels, HU ${ct.stats.hu_min}…${ct.stats.hu_max}. MPR + VR rendered.`,
+        text: `Volume ${ct.stats.slices} slices, ${(ct.stats.voxels / 1e6).toFixed(1)}M voxels, HU ${ct.stats.hu_min}…${ct.stats.hu_max}. MPR + VR rendered — full output exportable from the studio.`,
       });
     }
+    return out;
+  }, [results]);
+
+  /* detailed bilingual reports from every engine that produced one */
+  const detailed = useMemo(() => {
+    const out: { module: string; accent: string; report: NonNullable<EngineResult["report"]> }[] = [];
+    const fr = results.fracture as FractureResult | undefined;
+    if (fr?.report) out.push({ module: "Fracture Detection", accent: MODULES[0].accent, report: fr.report });
+    const ch = results.chest18 as Chest18Result | undefined;
+    if (ch?.report) out.push({ module: "Lung Screen (18)", accent: MODULES[2].accent, report: ch.report });
+    const mm = results.mammography as MammoResult | undefined;
+    if (mm?.report) out.push({ module: "Mammography AI", accent: MODULES[3].accent, report: mm.report });
+    const bn = results["bone-suppression"] as BoneResult | undefined;
+    if (bn?.report) out.push({ module: "Bone Suppression", accent: MODULES[1].accent, report: bn.report });
+    const ct = results.ct3d as Ct3dResult | undefined;
+    if (ct?.report) out.push({ module: "3D CT Studio", accent: MODULES[4].accent, report: ct.report });
     return out;
   }, [results]);
 
@@ -1313,6 +1445,23 @@ function ReportDesk({ results }: ReportDeskProps) {
     if (!w) return;
     const esc = (s: string) =>
       s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const detailHtml = detailed
+      .map(
+        (d) =>
+          `<div class="module"><h2>${esc(d.module)}</h2>${d.report.sections
+            .map(
+              (s) =>
+                `<div class="sec"><h3>${esc(s.title_en)} — ${esc(s.title_fa)}</h3>` +
+                `<p dir="rtl" lang="fa">${esc(s.body_fa)}</p>` +
+                `<p class="en">${esc(s.body_en)}</p></div>`
+            )
+            .join("")}${
+            d.report.disclaimer_en
+              ? `<p class="foot">${esc(d.report.disclaimer_en)}</p>`
+              : ""
+          }</div>`
+      )
+      .join("");
     w.document.write(`<!doctype html><html><head><meta charset="utf-8">
 <title>Boali Radiology Report</title>
 <style>
@@ -1323,6 +1472,12 @@ function ReportDesk({ results }: ReportDeskProps) {
   td,th{border:1px solid #999;padding:6px 9px;text-align:left;vertical-align:top}
   th{background:#f2f2f2;width:170px}
   .findings td:first-child{font-weight:bold}
+  .module{border:1px solid #999;padding:14px;margin:16px 0}
+  .module h2{font-size:15px;margin:0 0 8px;border-bottom:1px solid #bbb;padding-bottom:4px}
+  .sec{margin:10px 0}
+  .sec h3{font-size:12.5px;margin:0 0 3px}
+  .sec p{margin:0 0 6px;font-size:12.5px;line-height:1.8}
+  .sec p.en{color:#444;font-size:11.5px;border-top:1px dotted #bbb;padding-top:4px}
   .impression{border:1px solid #999;padding:12px;font-size:13px;white-space:pre-wrap;margin-top:12px}
   .foot{margin-top:26px;color:#777;font-size:10.5px;border-top:1px solid #bbb;padding-top:8px}
 </style></head><body>
@@ -1344,12 +1499,13 @@ ${
         .join("")}</table>`
     : "<p>No engine results recorded in this session yet — run a module first.</p>"
 }
-${impression.trim() ? `<div class="impression"><b>Impression</b><br/>${esc(impression)}</div>` : ""}
-<div class="foot">Generated by Boali Radiology Suite · engines ported verbatim from boali-radiology-suite.</div>
+${detailHtml}
+${impression.trim() ? `<div class="impression"><b>Impression (radiologist)</b><br/>${esc(impression)}</div>` : ""}
+<div class="foot">Generated by Boali Radiology Suite · engines ported verbatim from boali-radiology-suite · detailed sections are bilingual (English / فارسی).</div>
 <script>window.print()</script>
 </body></html>`);
     w.document.close();
-  }, [rows, patientName, patientId, indication, impression]);
+  }, [rows, detailed, patientName, patientId, indication, impression]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-3 lg:flex-row">
@@ -1437,12 +1593,290 @@ ${impression.trim() ? `<div class="impression"><b>Impression</b><br/>${esc(impre
               </motion.div>
             ))
           )}
+
+          {/* detailed bilingual reports per engine */}
+          {detailed.length > 0 && (
+            <div className="mt-1 space-y-3">
+              {detailed.map((d) => (
+                <div key={d.module}>
+                  <p className="mb-1 text-[11px] font-bold tracking-widest" style={{ color: d.accent }}>
+                    {d.module.toUpperCase()} — DETAILED REPORT
+                  </p>
+                  <EngineReportView report={d.report} accent={d.accent} compact />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <p className="text-[9.5px] leading-relaxed text-[#5a6e82]">
           Only findings actually computed by the engines during this session appear here — the
           report never invents content.
         </p>
       </section>
+    </div>
+  );
+}
+
+/* ================ 7. QA — validation lab layout ==================== */
+
+function QaRoom() {
+  const meta = MODULES[6];
+  const [running, setRunning] = useState(false);
+  const [includeBone, setIncludeBone] = useState(true);
+  const [result, setResult] = useState<QaSelftestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  /* live free-RAM from the bone engine status (auto-skip when critical) */
+  const [boneRam, setBoneRam] = useState<{ free?: number; min?: number }>({});
+
+  useEffect(() => {
+    let alive = true;
+    const poll = async () => {
+      const s = await fetchEngineStatus();
+      if (!alive) return;
+      const b = s?.engines.find((e) => e.engine === "bone-suppression");
+      if (b) setBoneRam({ free: b.free_ram_mb, min: b.min_free_ram_mb });
+    };
+    void poll();
+    const t = setInterval(poll, 10000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+
+  const ramLow =
+    boneRam.free != null && boneRam.min != null && boneRam.free < boneRam.min;
+  const boneAllowed = includeBone && !ramLow;
+
+  const start = useCallback(async () => {
+    setRunning(true);
+    setError(null);
+    setResult(null);
+    try {
+      const r = await runQaSelftest(boneAllowed);
+      setResult(r);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning(false);
+    }
+  }, [boneAllowed]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+      {/* intro panel */}
+      <section
+        className="shrink-0 rounded-2xl border p-4"
+        style={{ borderColor: `${meta.accent}30`, background: meta.accentSoft }}
+        aria-label="Validation suite description"
+      >
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold tracking-widest" style={{ color: meta.accent }}>
+              صحت‌سنجی · INVARIANT SELF-TEST
+            </p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-[#c3cedb]">
+              Runs every ready engine on its bundled sample and verifies the invariants a
+              trustworthy inference service must hold: deterministic output (same input →
+              identical result), valid ranges (probabilities in [0,1], boxes inside the
+              image), internal consistency (probability sum = 1, threshold flags, the bone
+              decomposition additive identity <span className="font-mono">soft + bone = input</span>)
+              and complete payloads (images + report sections).
+            </p>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-[#8fa3b8]" dir="rtl" lang="fa">
+              هر موتور روی نمونه داخلی خود اجرا و ناورداهای اعتماد بررسی می‌شود: قطعیت خروجی،
+              اعتبار بازه‌ها، سازگاری داخلی و کامل بودن خروجی‌ها. هیچ عددی جعل نمی‌شود — موارد
+              ردشده دلیل واقعی خود را نشان می‌دهند.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-col items-stretch gap-2">
+            <label
+              className={`flex items-center gap-2 text-[11px] ${
+                ramLow ? "text-[#5a6e82]" : "text-[#a9bccd]"
+              }`}
+              title={
+                ramLow
+                  ? `Only ${boneRam.free} MB RAM free (needs ${boneRam.min} MB) — the suppression traces would be skipped`
+                  : undefined
+              }
+            >
+              <input
+                type="checkbox"
+                checked={includeBone}
+                onChange={(e) => setIncludeBone(e.target.checked)}
+                className="h-4 w-4 accent-[#4ade80]"
+                disabled={running}
+              />
+              include bone suppression (+20 s)
+              {ramLow && (
+                <span className="rounded-full bg-[#eab308]/10 px-2 py-0.5 text-[9px] font-semibold text-[#e3c76a]">
+                  low RAM ({boneRam.free} MB) — will skip
+                </span>
+              )}
+            </label>
+            <button
+              type="button"
+              onClick={() => void start()}
+              disabled={running}
+              className={`flex h-10 items-center justify-center gap-2 rounded-xl px-5 text-[13px] font-bold transition-all ${
+                running
+                  ? "cursor-wait bg-[#223046] text-[#5a6e82]"
+                  : "bg-gradient-to-r from-[#4ade80] to-[#22c55e] text-[#06210f] hover:brightness-110 active:scale-[0.98]"
+              }`}
+            >
+              {running ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  Running suite… (1–3 min)
+                </>
+              ) : (
+                <>
+                  <Play className="h-4 w-4" aria-hidden="true" />
+                  Run self-test · اجرای صحت‌سنجی
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {error && <ErrorBanner error={error} />}
+
+      {running && (
+        <RunningBar
+          label="Running real inference on all engines sequentially (RAM-safe order)…"
+          accent={meta.accent}
+        />
+      )}
+
+      {/* results */}
+      {result && !running && (
+        <div className="scroll-dark flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pr-1" aria-live="polite">
+          {/* summary banner */}
+          <div
+            className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border p-3 ${
+              result.summary.all_passed
+                ? "border-[#22c55e]/40 bg-[#22c55e]/10"
+                : "border-[#f87171]/40 bg-[#f87171]/10"
+            }`}
+          >
+            <span
+              className={`text-[18px] font-bold ${
+                result.summary.all_passed ? "text-[#4ade80]" : "text-[#f87171]"
+              }`}
+            >
+              {result.summary.all_passed
+                ? "ALL CHECKS PASSED · همه بررسی‌ها موفق"
+                : `${result.summary.checks_failed} CHECK(S) FAILED`}
+            </span>
+            <span className="font-mono text-[12px] text-[#c3cedb]">
+              {result.summary.checks_passed}/{result.summary.checks_total - (result.summary.checks_skipped ?? 0)} checks
+              {result.summary.checks_skipped ? ` · ${result.summary.checks_skipped} skipped` : ""} ·{" "}
+              {(result.elapsed_ms / 1000).toFixed(1)} s · {result.started_at}
+            </span>
+          </div>
+
+          {/* per-engine result cards */}
+          {result.engines.map((e, i) => {
+            const real = e.checks.filter((c) => !c.skipped);
+            const passed = real.filter((c) => c.pass).length;
+            const skipped = e.checks.length - real.length;
+            const allOk = passed === real.length;
+            return (
+              <motion.section
+                key={e.engine}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: Math.min(i * 0.05, 0.3) }}
+                className="rounded-2xl border border-[#253548] bg-[#0d1622] p-3"
+                aria-label={`Validation results for ${e.engine}`}
+              >
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <ShieldCheck
+                    className={`h-4 w-4 ${allOk ? "text-[#4ade80]" : "text-[#f87171]"}`}
+                    aria-hidden="true"
+                  />
+                  <p className="text-[13px] font-bold text-[#e8eef5]">{e.name}</p>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      allOk
+                        ? "bg-[#22c55e]/15 text-[#4ade80]"
+                        : "bg-[#f87171]/15 text-[#f87171]"
+                    }`}
+                  >
+                    {passed}/{real.length}
+                    {skipped > 0 ? ` · ${skipped} skipped` : ""}
+                  </span>
+                  {e.elapsed_ms != null && (
+                    <span className="font-mono text-[10px] text-[#5a6e82]">
+                      {e.elapsed_ms} ms
+                    </span>
+                  )}
+                  {e.detail && (
+                    <span className="ml-auto truncate font-mono text-[9.5px] text-[#5a6e82]">
+                      {e.detail}
+                    </span>
+                  )}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[560px] border-collapse text-[11px]">
+                    <thead>
+                      <tr className="text-left text-[9.5px] uppercase tracking-wider text-[#5a6e82]">
+                        <th className="border-b border-[#223046] px-2 py-1.5">check</th>
+                        <th className="border-b border-[#223046] px-2 py-1.5">expected</th>
+                        <th className="border-b border-[#223046] px-2 py-1.5">measured</th>
+                        <th className="border-b border-[#223046] px-2 py-1.5 text-right">result</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {e.checks.map((c) => (
+                        <tr
+                          key={c.name}
+                          className={c.pass ? "" : "bg-[#f87171]/5"}
+                        >
+                          <td className="border-b border-[#1a2735] px-2 py-1.5 font-medium text-[#c3cedb]">
+                            {c.name}
+                          </td>
+                          <td className="border-b border-[#1a2735] px-2 py-1.5 font-mono text-[10px] text-[#8fa3b8]">
+                            {c.expected}
+                          </td>
+                          <td className="border-b border-[#1a2735] px-2 py-1.5 font-mono text-[10px] text-[#a9bccd]">
+                            {c.measured}
+                          </td>
+                          <td className="border-b border-[#1a2735] px-2 py-1.5 text-right">
+                            <span
+                              className={`font-bold ${
+                                c.skipped
+                                  ? "text-[#8fa3b8]"
+                                  : c.pass
+                                    ? "text-[#4ade80]"
+                                    : "text-[#f87171]"
+                              }`}
+                            >
+                              {c.skipped ? "SKIP —" : c.pass ? "PASS ✓" : "FAIL ✗"}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </motion.section>
+            );
+          })}
+
+          <p className="shrink-0 text-[10px] leading-relaxed text-[#5a6e82]">{result.note}</p>
+        </div>
+      )}
+
+      {!result && !running && !error && (
+        <EmptyDrop
+          accent={meta.accent}
+          icon={ShieldCheck}
+          line="Run the invariant self-test to validate every module"
+          hint="Determinism, ranges, consistency, payload completeness and the bone-decomposition additive identity — measured on real model outputs, never assumed."
+        />
+      )}
     </div>
   );
 }
@@ -1589,7 +2023,7 @@ export function ModuleWorkspace({
   useEffect(() => {
     if (!pacsStudy || pacsLoadedFor.current === pacsOpenAt) return;
     if (modalityToModule(pacsStudy.modality) !== moduleId) return;
-    if (moduleId === "report") return;
+    if (moduleId === "report" || moduleId === "qa") return;
     pacsLoadedFor.current = pacsOpenAt;
     let cancelled = false;
     void (async () => {
@@ -1606,6 +2040,8 @@ export function ModuleWorkspace({
   const body =
     meta.id === "report" ? (
       <ReportDesk results={results} />
+    ) : meta.id === "qa" ? (
+      <QaRoom />
     ) : (
       <>
         {meta.id === "fracture" && <FractureRoom run={run} />}

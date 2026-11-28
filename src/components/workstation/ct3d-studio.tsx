@@ -4,17 +4,23 @@
 /*  3D CT Studio view — interactive MPR slice browser + ray-cast VR    */
 /*  over a volume cached in the boali-engine service. Every image is  */
 /*  computed from the real DICOM series (no mock renders).            */
+/*  v1.4: full-size output lightbox, ZIP export (both VR presets,     */
+/*  all MPR windows, montage, stats, report) and the structured       */
+/*  bilingual report — the reconstruction OUTPUT is fully visible     */
+/*  and downloadable.                                                  */
 /* ------------------------------------------------------------------ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Boxes, Loader2, RotateCw } from "lucide-react";
+import { Box, Boxes, Download, Expand, FileText, Loader2, RotateCw, X } from "lucide-react";
 import {
+  ct3dExportUrl,
   fetchCt3dSlice,
   fetchCt3dVr,
   type Ct3dPlane,
   type Ct3dPreset,
   type Ct3dResult,
 } from "@/lib/boali-engine";
+import { EngineReportView } from "./engine-report-view";
 
 const PLANES: { id: Ct3dPlane; label: string }[] = [
   { id: "axial", label: "Axial" },
@@ -33,7 +39,13 @@ const PRESETS: { id: Ct3dPreset; label: string }[] = [
   { id: "soft", label: "Soft tissue" },
 ];
 
-export function Ct3dStudioView({ result }: { result: Ct3dResult }) {
+export function Ct3dStudioView({
+  result,
+  accent = "#a78bfa",
+}: {
+  result: Ct3dResult;
+  accent?: string;
+}) {
   const [view, setView] = useState<"mpr" | "vr">("mpr");
   const [plane, setPlane] = useState<Ct3dPlane>("axial");
   const [window, setWindow] = useState<string>("lung");
@@ -43,6 +55,8 @@ export function Ct3dStudioView({ result }: { result: Ct3dResult }) {
   const [vrImg, setVrImg] = useState<string>(result.vr.image);
   const [vrPreset, setVrPreset] = useState<Ct3dPreset>(result.preset);
   const [vrLoading, setVrLoading] = useState(false);
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [showReport, setShowReport] = useState(false);
   const sliceGen = useRef(0);
 
   const count = result.planes[plane].count;
@@ -87,6 +101,17 @@ export function Ct3dStudioView({ result }: { result: Ct3dResult }) {
 
   const st = result.stats;
 
+  const downloadZip = useCallback(() => {
+    /* full-resolution bundle: both VR presets @768px, 9 MPR slices
+     * @1024px, axial montage, volume-stats.json, bilingual report.txt */
+    const a = document.createElement("a");
+    a.href = ct3dExportUrl(result.volume_id, vrPreset);
+    a.download = `boali-ct3d-${result.volume_id}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, [result.volume_id, vrPreset]);
+
   return (
     <div className="mt-3 space-y-2.5" aria-live="polite">
       {/* volume meta line */}
@@ -115,8 +140,8 @@ export function Ct3dStudioView({ result }: { result: Ct3dResult }) {
         </div>
       )}
 
-      {/* view switch */}
-      <div className="flex items-center gap-1.5" role="tablist" aria-label="3D view mode">
+      {/* view switch + output actions */}
+      <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="3D view mode">
         <button
           type="button"
           role="tab"
@@ -145,7 +170,39 @@ export function Ct3dStudioView({ result }: { result: Ct3dResult }) {
           <Boxes className="h-3.5 w-3.5" aria-hidden="true" />
           Volume render
         </button>
+
+        <span className="ml-auto flex items-center gap-1.5">
+          {result.report && (
+            <button
+              type="button"
+              onClick={() => setShowReport((v) => !v)}
+              aria-pressed={showReport}
+              className={`flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[10.5px] font-medium transition-colors ${
+                showReport
+                  ? "border-[#facc15]/40 bg-[#3a2a12] text-[#fbbf24]"
+                  : "border-[#253548] bg-[#141e2a] text-[#8fa3b8] hover:text-white"
+              }`}
+            >
+              <FileText className="h-3 w-3" aria-hidden="true" />
+              Report · گزارش
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={downloadZip}
+            className="flex h-7 items-center gap-1.5 rounded-full bg-gradient-to-r from-[#a78bfa] to-[#8b5cf6] px-3 text-[10.5px] font-bold text-[#170f2b] transition-all hover:brightness-110 active:scale-[0.98]"
+            title="Download the full-resolution output bundle: both VR presets (768 px), 9 MPR center slices (1024 px), axial montage, volume-stats.json and a bilingual report"
+          >
+            <Download className="h-3 w-3" aria-hidden="true" />
+            Download output (ZIP)
+          </button>
+        </span>
       </div>
+
+      {/* structured report (toggle) */}
+      {showReport && result.report && (
+        <EngineReportView report={result.report} accent={accent} />
+      )}
 
       {view === "mpr" ? (
         <div className="rounded-xl border border-[#253548] bg-[#0f1823] p-2">
@@ -187,12 +244,13 @@ export function Ct3dStudioView({ result }: { result: Ct3dResult }) {
           </div>
 
           {/* slice image */}
-          <div className="relative overflow-hidden rounded-lg border border-[#253548] bg-black">
+          <div className="group relative overflow-hidden rounded-lg border border-[#253548] bg-black">
             {sliceImg ? (
               <img
                 src={sliceImg}
                 alt={`Real ${plane} MPR slice ${clamped} of ${count}, ${window} window`}
-                className="max-h-[340px] w-full object-contain"
+                className="max-h-[340px] w-full cursor-zoom-in object-contain"
+                onClick={() => setLightbox(sliceImg)}
               />
             ) : (
               <div className="flex h-52 items-center justify-center">
@@ -204,6 +262,14 @@ export function Ct3dStudioView({ result }: { result: Ct3dResult }) {
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-[#7dd3fc]" aria-hidden="true" />
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => sliceImg && setLightbox(sliceImg)}
+              aria-label="Open slice full-size"
+              className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-lg border border-[#253548] bg-black/70 text-[#a9bccd] opacity-0 transition-opacity hover:text-white group-hover:opacity-100"
+            >
+              <Expand className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
             <span className="absolute bottom-2 left-2 rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-[#c3cedb] backdrop-blur-sm">
               {plane} {clamped}/{count} · {window} W
             </span>
@@ -255,12 +321,21 @@ export function Ct3dStudioView({ result }: { result: Ct3dResult }) {
             </span>
           </div>
 
-          <div className="relative overflow-hidden rounded-lg border border-[#253548] bg-black">
+          <div className="group relative overflow-hidden rounded-lg border border-[#253548] bg-black">
             <img
               src={vrImg}
               alt={`Real ray-cast volume rendering, ${vrPreset} preset`}
-              className="max-h-[340px] w-full object-contain"
+              className="max-h-[340px] w-full cursor-zoom-in object-contain"
+              onClick={() => setLightbox(vrImg)}
             />
+            <button
+              type="button"
+              onClick={() => setLightbox(vrImg)}
+              aria-label="Open volume render full-size"
+              className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-lg border border-[#253548] bg-black/70 text-[#a9bccd] opacity-0 transition-opacity hover:text-white group-hover:opacity-100"
+            >
+              <Expand className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
             {vrLoading && (
               <span className="absolute inset-0 flex items-center justify-center bg-black/45 backdrop-blur-[2px]">
                 <Loader2 className="h-7 w-7 animate-spin text-[#a78bfa]" aria-hidden="true" />
@@ -276,7 +351,34 @@ export function Ct3dStudioView({ result }: { result: Ct3dResult }) {
       <p className="text-[10px] text-[#5a6e82]">
         MPR and volume rendering computed live from the DICOM voxel data (numpy + scipy,
         ported geometry). Gaps in the source series are rendered as air — never fabricated.
+        Click any image for full size, or download the complete output bundle as ZIP.
       </p>
+
+      {/* full-size output lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Full-size 3D output"
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setLightbox(null)}
+            aria-label="Close full-size view"
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-xl border border-[#253548] bg-[#141e2a]/90 text-[#a9bccd] transition-colors hover:text-white"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <img
+            src={lightbox}
+            alt="Full-size 3D CT output"
+            className="max-h-[92vh] max-w-[94vw] rounded-xl border border-[#253548] object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }
