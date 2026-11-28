@@ -1,0 +1,6 @@
+python312.zip
+.
+Lib\site-packages
+
+# Enables site-packages processing for the bundled offline wheels
+import site

@@ -1,0 +1,10 @@
+{
+  "name": "boali-pacs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hardened PACS gateway for the Boali radiology suite — API-key auth, parameterized SQL, path traversal guard, full audit trail.",
+  "scripts": {
+    "dev": "python3 -m uvicorn app:app --host 127.0.0.1 --port 3021 --reload",
+    "start": "python3 -m uvicorn app:app --host 127.0.0.1 --port 3021"
+  }
+}

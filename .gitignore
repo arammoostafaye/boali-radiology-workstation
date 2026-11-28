@@ -53,6 +53,12 @@ server.log
 # Skills directory
 /skills/
 
+# ---- Boali: MedalPACS bridge runtime artifacts -------------------------
+# 12-hour persisted login sessions + downloaded DICOM study packages
+# (machine-local, never part of the shipped product)
+.boali-medal-sessions.json
+.boali-medal-cache/
+
 # ---- Boali: runtime / machine-local artifacts --------------------------
 # agent session artifacts
 /tool-results/
