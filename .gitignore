@@ -1,0 +1,94 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+local-*
+.claude
+.z-ai-config
+*.log
+dev.log
+dev.out.log
+test
+prompt
+
+server.log
+# Skills directory
+/skills/
+
+# ---- Boali: runtime / machine-local artifacts --------------------------
+# agent session artifacts
+/tool-results/
+# user uploads (transient; extracted assets live in public/)
+/upload/
+/download/
+# sandbox infrastructure (not part of the shipped product)
+/.zscripts/
+/examples/
+/tests/
+/scripts/
+/Caddyfile
+# runtime databases (auto-created on first run)
+mini-services/boali-pacs/pacs.db
+db/*.db
+# Python venv created by windows/START-BOALI.bat
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# ---- Boali: giant model weights (417 MB each, over GitHub's 100 MB limit)
+# Stored as <100 MB chunks in weights/chunks/ (all bytes ship with the repo).
+# These assembled files are rebuilt locally by windows/START-BOALI.bat or
+# tools/assemble_weights.py and never committed.
+mini-services/boali-engine/weights/bone_suppression.ts
+mini-services/boali-engine/weights/lung_component_suppression.ts
+
+# ---- Boali: bundled Windows runtime wheels ------------------------------
+# torch (109 MB) is over GitHub's 100 MiB per-file limit, so it is shipped
+# split in runtime/wheels/chunks/ and assembled locally by
+# windows/START-BOALI.bat / tools/assemble_runtime.py (sha256-verified
+# against runtime/MANIFEST.txt). The assembled wheel is never committed.
+# (torchvision-*.whl does NOT match this pattern and stays tracked.)
+runtime/wheels/torch-*.whl
+# bundled runtimes extracted on first launch (the .zip sources stay tracked)
+runtime/python/
+runtime/node/
+runtime/tmp/

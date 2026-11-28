@@ -1,0 +1,137 @@
+name: Windows portable release
+
+# Builds the ready-to-run Windows package and attaches it to a GitHub
+# Release. The zip is COMPLETELY self-contained:
+#   - all model weights pre-assembled (no chunks)
+#   - the embedded CPython 3.12 runtime with PRE-INSTALLED site-packages
+#     (torch, torchvision, fastapi, ... - no pip, no bootstrap)
+#   - the Node.js 22 win-x64 runtime, extracted and ready
+#   - a PREBUILT PRODUCTION web app (next build -- standalone): the
+#     server starts in ~2 seconds on the target machine - no compile
+#     step, no node_modules install, no win32 swc natives needed
+# No Python, Node, internet or disk downloads are needed on the target
+# machine - extract and double-click START-BOALI.bat.
+#
+# Why a workflow instead of uploading from a dev machine: the package is
+# ~1.4 GB. Building it on GitHub's own runners avoids flaky large uploads
+# and keeps the bytes server-side the whole time.
+#
+# workflow_dispatch runs the full build WITHOUT attaching a release -
+# used to validate the pipeline before tagging.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository (all weights / wheels / runtimes inside)
+        uses: actions/checkout@v4
+
+      - name: Set up Python (assembly + cross-platform wheel install)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Bun (installing deps + building the web app)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Assemble the 417 MB TorchScript weights from repo chunks
+        run: python tools/assemble_weights.py
+
+      - name: Assemble the bundled Windows torch wheel from repo chunks
+        run: python tools/assemble_runtime.py
+
+      - name: Build the production web app (standalone output)
+        run: |
+          set -euxo pipefail
+          bun install
+          bun run build
+          test -f .next/standalone/server.js
+          test -d .next/standalone/.next/static
+          test -d .next/standalone/public
+          du -sh .next/standalone
+
+      - name: Build the ready-to-run portable zip
+        run: |
+          set -euxo pipefail
+          REF="${GITHUB_REF_NAME:-v1.2.0}"
+          NAME="Boali-Radiology-Workstation-${REF}-Windows-Portable"
+          STAGE="dist-stage/Boali"
+          mkdir -p "${STAGE}" dist
+
+          # ---- copy the project tree ----
+          # NOTE: all excludes are ROOT-ANCHORED (/...). node_modules and
+          # .next stay out - the prebuilt webapp carries its own traced
+          # runtime instead of the 1.1 GB dev dependency tree.
+          rsync -a \
+            --exclude='/.git' --exclude='/.github' --exclude='/dist' \
+            --exclude='/dist-stage' --exclude='/.next' --exclude='/.venv' \
+            --exclude='/.env' --exclude='/dev.log' --exclude='/db' \
+            --exclude='/upload' --exclude='/download' \
+            --exclude='/tool-results' --exclude='/.zscripts' \
+            --exclude='/examples' --exclude='/tests' --exclude='/scripts' \
+            --exclude='/Caddyfile' --exclude='*.db' --exclude='/runtime/tmp' \
+            --exclude='/node_modules' \
+            ./ "${STAGE}/"
+
+          # ---- prebuilt production web app (server.js + traced modules) ----
+          mkdir -p "${STAGE}/webapp"
+          rsync -a .next/standalone/ "${STAGE}/webapp/"
+
+          # ---- pre-assembled content: chunks are no longer needed ----
+          rm -rf "${STAGE}/mini-services/boali-engine/weights/chunks"
+          rm -rf "${STAGE}/runtime/wheels/chunks"
+
+          # ---- the release ships a PRE-INSTALLED python environment ----
+          # (wheels themselves stay in the git repo only)
+          rm -rf "${STAGE}/runtime/wheels" "${STAGE}/runtime/MANIFEST.txt"
+
+          # ---- extract the bundled runtimes into the package ----
+          rm -f "${STAGE}/runtime/python-3.12.10-embed-amd64.zip" \
+                "${STAGE}/runtime/node-v22.23.5-win-x64.zip"
+          mkdir -p "${STAGE}/runtime/python" "${STAGE}/runtime/node"
+          unzip -q runtime/python-3.12.10-embed-amd64.zip -d "${STAGE}/runtime/python"
+          cp runtime/python312._pth "${STAGE}/runtime/python/python312._pth"
+          unzip -q runtime/node-v22.23.5-win-x64.zip -d "${STAGE}/runtime/node"
+
+          # ---- install every Python dependency into the embedded runtime ----
+          # cross-platform install: win_amd64 / cp312 wheels from the repo
+          # (verified locally - this exact command was tested end to end)
+          python -m pip install --no-index --find-links runtime/wheels \
+            --platform win_amd64 --abi cp312 --implementation cp \
+            --python-version 3.12 --only-binary=:all: \
+            --target "${STAGE}/runtime/python/Lib/site-packages" \
+            pip fastapi uvicorn python-multipart numpy \
+            opencv-python-headless Pillow pydicom scipy torch torchvision
+
+          # ---- free runner disk before zipping ----
+          rm -rf node_modules .next
+
+          # ---- zip it up (short top folder "Boali" = safe path lengths) ----
+          ( cd dist-stage && zip -r -q -9 "${GITHUB_WORKSPACE}/dist/${NAME}.zip" Boali )
+          cd dist
+          sha256sum "${NAME}.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          ls -lh
+          du -sh "${GITHUB_WORKSPACE}/dist-stage/Boali"
+
+      - name: Attach package to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: .github/release-notes.md
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

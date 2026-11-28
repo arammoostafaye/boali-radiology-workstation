@@ -1,0 +1,18 @@
+# Boali engine weights manifest
+# ---------------------------------------------------------------------------
+# format:  <filename>  <size_bytes>  <sha256>
+#
+# The two Qure TorchScript traces (417 MB each) exceed GitHub's 100 MB
+# per-file limit, so they are stored SPLIT inside this repository under
+# chunks/  and reassembled locally on first launch:
+#
+#     windows/START-BOALI.bat   (Windows, automatic)
+#     tools/assemble_weights.py (any OS, sha256-verified)
+#
+# No internet download is needed - all model bytes ship with the repo.
+# ---------------------------------------------------------------------------
+bone_suppression.ts           417479853  32d658435514c2d78b587a5c36fa49a0e2011b1417f248582f8f03ed728c48a4
+lung_component_suppression.ts 417453912  78d12045f60f2d0a356f0870edda1342e7c9bb7474f952b6cff68d0932d3d2e5
+fracture_ortho.onnx           10604520   5f16fff48dc54a5ca2b4c625a8df4d55c2beaef18b202fc8dba6e1117a112686
+cxr_densenet18.ts             29041361   ecef43d8d9f43b80114194a372702319118254f433f864d80e534399afacd2df
+mammo_resnet50.pt             94376842   9e5d4f6be6d9ccc9f7eefa5ea0c05959b8de28423fd3c98fdd64750b0be3db2b
