@@ -841,3 +841,171 @@ export async function readFileHead(filePath: string, n = 4): Promise<Buffer> {
     await fh.close();
   }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Study page fetch + DICOM package download — a faithful port of     */
+/*  the radiologist's WORKING desktop engine (MedalDicomDownloader):   */
+/*                                                                    */
+/*    • visit the study page FIRST (ShowStudy → Default →              */
+/*      ImageViewer → Process) — establishes server-side study        */
+/*      state and yields the REAL HashKey                             */
+/*    • download via Download.aspx with mode="1" and the study page    */
+/*      as Referer (the old app's exact parameters)                   */
+/*    • if the server answers with an HTML page naming a temp zip,     */
+/*      fetch it from /MedalWeb/temp/                                 */
+/*    • every attempt is recorded for honest diagnostics              */
+/* ------------------------------------------------------------------ */
+
+export interface StudyPageResult {
+  html: string;
+  finalUrl: string;
+}
+
+/** fetch the study page — old-app endpoint order */
+export async function fetchStudyPage(
+  jar: Map<string, string>,
+  base: string,
+  sk: string
+): Promise<StudyPageResult | null> {
+  const skPlus = sk.replace(/\+/g, "%2B");
+  const candidates = [
+    `${base}/MedalWeb/ShowStudy.aspx?SK=${skPlus}`,
+    `${base}/MedalWeb/Default.aspx?SK=${skPlus}`,
+    `${base}/MedalWeb/ImageViewer.aspx?SK=${skPlus}`,
+    `${base}/MedalWeb/Process.aspx?SK=${skPlus}`,
+  ];
+  for (const u of candidates) {
+    try {
+      const { res, url } = await follow(jar, u, {}, 8, 20_000);
+      const html = await res.text();
+      if (/login\.aspx/i.test(url)) continue;
+      if (/var Studies|lblPID|Patient/i.test(html)) {
+        return { html, finalUrl: url };
+      }
+    } catch {
+      /* next candidate */
+    }
+  }
+  return null;
+}
+
+export interface DownloadAttempt {
+  url: string;
+  status: string;
+  bytes: number;
+  zipMagic: boolean;
+  tempZipTried: string | null;
+  ok: boolean;
+  error?: string;
+}
+
+export interface PackageDownloadResult {
+  ok: boolean;
+  zipPath: string;
+  attempts: DownloadAttempt[];
+}
+
+/** download the full DICOM package — old-app candidate order & params */
+export async function downloadStudyPackage(
+  jar: Map<string, string>,
+  base: string,
+  opts: {
+    pid: string;
+    studyKey: string;
+    hashKey: string;
+    pageUrl: string;
+    mode?: string;
+    zipPath: string;
+  }
+): Promise<PackageDownloadResult> {
+  const mode = opts.mode ?? "1"; /* the working desktop default */
+  const { pid, studyKey, hashKey, pageUrl, zipPath } = opts;
+
+  const cands: string[] = [];
+  const push = (u: string | null) => {
+    if (u && !cands.includes(u)) cands.push(u);
+  };
+  if (pid) {
+    push(
+      `${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(hashKey)}&PID=${encodeURIComponent(pid)}&mode=${mode}`
+    );
+    push(
+      `${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(studyKey)}&PID=${encodeURIComponent(pid)}&mode=${mode}`
+    );
+  }
+  push(`${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(hashKey)}&mode=${mode}`);
+  push(`${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(studyKey)}&mode=${mode}`);
+  if (pid) {
+    push(
+      `${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(hashKey)}&PID=${encodeURIComponent(pid)}`
+    );
+    push(
+      `${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(studyKey)}&PID=${encodeURIComponent(pid)}`
+    );
+  }
+
+  const attempts: DownloadAttempt[] = [];
+
+  for (const dl of cands) {
+    const att: DownloadAttempt = {
+      url: dl,
+      status: "",
+      bytes: 0,
+      zipMagic: false,
+      tempZipTried: null,
+      ok: false,
+    };
+    attempts.push(att);
+    try {
+      await streamToFile(jar, dl, pageUrl, zipPath);
+      const st = await fs.stat(zipPath).catch(() => null);
+      att.bytes = st?.size ?? 0;
+      const head = await readFileHead(zipPath, 4);
+      if (head.length >= 2 && head[0] === 0x50 && head[1] === 0x4b) {
+        att.zipMagic = true;
+        att.status = "zip";
+        if (att.bytes > 200) {
+          att.ok = true;
+          return { ok: true, zipPath, attempts };
+        }
+      } else {
+        /* maybe the server answered with a page naming the real zip */
+        const txt = (await fs.readFile(zipPath, "utf8")).slice(0, 4096);
+        att.status = /<html|<!doctype/i.test(txt)
+          ? `html ${att.bytes}B`
+          : `binary ${att.bytes}B`;
+        const zm = txt.match(/([A-Za-z0-9_\-]+\.zip)/i);
+        if (zm) {
+          att.tempZipTried = zm[1];
+          const tempUrl = `${base}/MedalWeb/temp/${zm[1]}`;
+          try {
+            await streamToFile(jar, tempUrl, pageUrl, zipPath);
+            const h2 = await readFileHead(zipPath, 4);
+            const st2 = await fs.stat(zipPath).catch(() => null);
+            att.bytes = st2?.size ?? att.bytes;
+            if (
+              h2.length >= 2 &&
+              h2[0] === 0x50 &&
+              h2[1] === 0x4b &&
+              (st2?.size ?? 0) > 200
+            ) {
+              att.ok = true;
+              att.status = "temp-zip";
+              return { ok: true, zipPath, attempts };
+            }
+            att.status = `temp-zip bad (${att.bytes}B)`;
+          } catch (e) {
+            att.error =
+              e instanceof Error ? e.message.slice(0, 120) : "temp zip failed";
+          }
+        } else {
+          att.error = `non-zip response (${att.bytes} bytes)`;
+        }
+      }
+    } catch (e) {
+      att.error =
+        e instanceof Error ? e.message.slice(0, 160) : "download failed";
+    }
+  }
+  return { ok: false, zipPath, attempts };
+}

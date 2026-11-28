@@ -9,12 +9,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { ChevronRight, FileWarning, Loader2, Play, Radio, ShieldCheck } from "lucide-react";
+import { ChevronRight, FileWarning, Loader2, Play, Radio, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   fetchEngineStatus,
   type EngineState,
   type EngineStatusResponse,
 } from "@/lib/boali-engine";
+import { useMedalBridge } from "@/lib/medal-bridge";
+import { UpdateDialog } from "./update-dialog";
 
 export type LauncherModuleId = "fracture" | "bone" | "chest18" | "mammo" | "studio" | "report" | "qa";
 
@@ -98,13 +100,22 @@ const STATE_CHIP: Record<string, { dot: string; text: string; label: string }> =
 
 interface ModuleLauncherProps {
   onEnterModule: (moduleId: LauncherModuleId) => void;
+  onOpenPacs: () => void;
   onReplayIntro: () => void;
 }
 
-export function ModuleLauncher({ onEnterModule, onReplayIntro }: ModuleLauncherProps) {
+export function ModuleLauncher({ onEnterModule, onOpenPacs, onReplayIntro }: ModuleLauncherProps) {
   const [status, setStatus] = useState<EngineStatusResponse | null>(null);
   const [offline, setOffline] = useState(false);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
+  /* in-app update dialog (delta updates over the GitHub release) */
+  const [updateOpen, setUpdateOpen] = useState(false);
+  /* live MedalPACS bridge session (for the PACS login card chip) */
+  const medalConnected = useMedalBridge((s) => s.connected);
+  const medalInfo = useMedalBridge((s) => s.info);
+  useEffect(() => {
+    void useMedalBridge.getState().revalidate();
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -198,6 +209,15 @@ export function ModuleLauncher({ onEnterModule, onReplayIntro }: ModuleLauncherP
             )}
             {serviceLine}
           </span>
+          <button
+            type="button"
+            onClick={() => setUpdateOpen(true)}
+            className="flex h-9 items-center gap-2 rounded-full border border-[#253548] bg-[#141e2a] px-3.5 text-[12px] font-medium text-[#a9bccd] transition-colors hover:border-[#2dd4bf]/40 hover:text-white active:scale-95"
+            aria-label="بررسی نسخه جدید — Update"
+          >
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">بررسی نسخه جدید</span>
+          </button>
           <button
             type="button"
             onClick={onReplayIntro}
@@ -299,14 +319,70 @@ export function ModuleLauncher({ onEnterModule, onReplayIntro }: ModuleLauncherP
               </motion.button>
             );
           })}
+          {/* ---------- PACS login card (8th — user request) ---------- */}
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.05 * CARDS.length, ease: "easeOut" }}
+            onClick={onOpenPacs}
+            aria-label="اتصال به PACS بیمارستان — MedalPACS"
+            className="group relative aspect-[16/11] w-full overflow-hidden rounded-2xl border border-dashed border-[#a78bfa]/45 bg-gradient-to-br from-[#171233] via-[#131b2e] to-[#0f1a29] text-left shadow-[0_8px_28px_rgba(0,0,0,0.35)] transition-all duration-300 hover:-translate-y-1 hover:border-[#a78bfa]/80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#a78bfa]"
+            style={{ willChange: "transform" }}
+          >
+            {/* soft radial glow */}
+            <span
+              className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-[#a78bfa]/15 blur-3xl transition-opacity duration-300 group-hover:opacity-100"
+              aria-hidden="true"
+            />
+            {/* live session chip */}
+            <span
+              className={`absolute right-3 top-3 inline-flex h-6.5 items-center gap-1.5 rounded-full border border-white/10 bg-black/55 px-2.5 text-[10px] font-semibold backdrop-blur-md ${
+                medalConnected ? "text-[#4ade80]" : "text-[#8fa3b8]"
+              }`}
+              title={
+                medalConnected
+                  ? `${medalInfo?.hospitalName ?? "MedalPACS"} — نشست فعال (~${Math.round(
+                      medalInfo?.validHoursRemaining ?? 12
+                    )} ساعت)`
+                  : "ورود پرسنلی به MedalWeb پکس بیمارستان"
+              }
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${medalConnected ? "bg-[#4ade80]" : "bg-[#8fa3b8]"}`}
+                aria-hidden="true"
+              />
+              {medalConnected ? "متصل" : "ورود پرسنلی"}
+            </span>
+
+            <span className="absolute inset-0 flex flex-col p-4">
+              <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-[#a78bfa]/40 bg-[#241d3a] text-[#c4b5fd]">
+                <svg viewBox="0 0 24 24" className="h-5.5 w-5.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4M9 10h.01M15 10h.01M9 14h.01M15 14h.01" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </span>
+              <span className="mt-auto">
+                <span dir="rtl" className="block text-[16.5px] font-bold text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                  اتصال به PACS · دریافت بیمار
+                </span>
+                <span className="mt-0.5 block truncate text-[11px] text-[#a9bccd]">
+                  MedalPACS Bridge · MedalWeb · Download.aspx
+                </span>
+                <span className="mt-2 flex h-6 w-fit items-center gap-1.5 rounded-full bg-white/10 px-3 text-[10.5px] font-semibold tracking-wide text-white opacity-0 backdrop-blur-md transition-all duration-300 group-hover:opacity-100">
+                  ورود و دریافت
+                  <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                </span>
+              </span>
+            </span>
+          </motion.button>
         </div>
 
         {/* honest-status footnote */}
         <p className="mx-auto mt-6 flex max-w-[1180px] items-start gap-2 text-[11px] leading-relaxed text-[#5a6e82]">
           <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#2dd4bf]" aria-hidden="true" />
           Engine chips reflect the real state of the boali-engine inference service — a module
-          only shows “engine live” when its actual model is loaded and runnable. Demo metrics
-          inside the workstation are clearly marked as mock.
+          only shows “engine live” when its actual model is loaded and runnable. The study
+          modality (MG / CT / DX) is detected from the actual DICOM headers.
         </p>
       </main>
 
@@ -315,9 +391,11 @@ export function ModuleLauncher({ onEnterModule, onReplayIntro }: ModuleLauncherP
         <div className="mx-auto flex max-w-[1180px] flex-wrap items-center gap-x-4 gap-y-1 text-[10.5px] text-[#5a6e82]">
           <span>© 2026 Boali Hospital · Radiology AI Workstation</span>
           <span className="hidden sm:inline">Research / education use — not a diagnostic device</span>
-          <span className="ml-auto font-mono">v3.7.0-web · engines ported from boali-radiology-suite</span>
+          <span className="ml-auto font-mono">v1.5.0 · in-app delta updates · MedalPACS bridge</span>
         </div>
       </footer>
+
+      {updateOpen && <UpdateDialog onClose={() => setUpdateOpen(false)} />}
     </div>
   );
 }

@@ -24,6 +24,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Bone,
+  Box,
   Brain,
   CloudDownload,
   Database,
@@ -187,26 +188,6 @@ function MedalLogin() {
   /* monotonic token — ignore responses from superseded prepare/refresh calls */
   const reqSeqRef = useRef(0);
 
-  /* restore last server + username */
-  useEffect(() => {
-    let savedUrl = "";
-    let savedUser = "";
-    let savedPreset = "lan";
-    try {
-      savedUrl = localStorage.getItem("boali.medalServer") ?? "";
-      savedUser = localStorage.getItem("boali.medalUser") ?? "";
-      savedPreset = localStorage.getItem("boali.medalPreset") ?? "lan";
-    } catch {
-      /* ignore */
-    }
-    setPresetId(savedPreset);
-    setUsername(savedUser);
-    if (savedUrl) {
-      setServerUrl(savedUrl);
-      /* auto-prepare like the desktop app (captcha ready immediately) */
-      void doPrepare(savedUrl);
-    }
-  }, []);
 
   const doPrepare = useCallback(
     async (url: string, keepCreds = false) => {
@@ -249,6 +230,32 @@ function MedalLogin() {
     },
     []
   );
+
+  /* restore last server + username — deferred via timeout(0) so no
+   * setState runs synchronously inside the effect body. */
+  useEffect(() => {
+    const t = setTimeout(() => {
+      let savedUrl = "";
+      let savedUser = "";
+      let savedPreset = "lan";
+      try {
+        savedUrl = localStorage.getItem("boali.medalServer") ?? "";
+        savedUser = localStorage.getItem("boali.medalUser") ?? "";
+        savedPreset = localStorage.getItem("boali.medalPreset") ?? "lan";
+      } catch {
+        /* ignore */
+      }
+      setPresetId(savedPreset);
+      setUsername(savedUser);
+      if (savedUrl) {
+        setServerUrl(savedUrl);
+        /* auto-prepare like the desktop app (captcha ready immediately) */
+        void doPrepare(savedUrl);
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [doPrepare]);
+
 
   const pickPreset = useCallback(
     (id: string) => {
@@ -779,6 +786,17 @@ function MedalConnected() {
   const [study, setStudy] = useState<MedalStudy | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [files, setFiles] = useState<MedalFile[] | null>(null);
+  /* post-download module hand-off (user-requested choice dialog) */
+  const [handoff, setHandoff] = useState<{
+    open: boolean;
+    modality: string | null;
+    source: string | null;
+    pid: string;
+    pname: string | null;
+    studyKey: string;
+    hashKey: string;
+    files: MedalFile[];
+  } | null>(null);
   const [fileCount, setFileCount] = useState<number | null>(null);
   const [engine, setEngine] = useState<AiEngineId | null>(null);
   const [aiProgress, setAiProgress] = useState<{ done: number; total: number } | null>(null);
@@ -810,7 +828,8 @@ function MedalConnected() {
   }, [info]);
 
   useEffect(() => {
-    void loadWorklist();
+    const t = setTimeout(() => void loadWorklist(), 0);
+    return () => clearTimeout(t);
   }, [loadWorklist]);
 
   const doLogout = useCallback(async () => {
@@ -884,14 +903,20 @@ function MedalConnected() {
           pid: study.pid,
           studyKey: study.studyKey,
           hashKey: study.hashKey,
+          /* the working desktop engine's download mode */
+          mode: "1",
         }),
       });
       const data = (await res.json()) as {
         ok?: boolean;
         cached?: boolean;
         pid?: string;
+        pname?: string | null;
+        patientName?: string | null;
         files?: MedalFile[];
         count?: number;
+        modality?: string | null;
+        modalitySource?: string | null;
         errorFa?: string;
         error?: string;
         expired?: boolean;
@@ -905,6 +930,35 @@ function MedalConnected() {
       }
       setFiles(data.files ?? []);
       setFileCount(data.count ?? data.files?.length ?? 0);
+
+      /* the server re-read the study page and the real DICOM headers —
+       * adopt the corrected pid / pname / modality, then ask the user
+       * which module room to open (recommended by modality). */
+      const realPid = data.pid ?? study.pid ?? "";
+      const realModality = data.modality ?? study.modality ?? "";
+      setStudy((prev) =>
+        prev
+          ? {
+              ...prev,
+              pid: realPid,
+              pname: data.pname ?? data.patientName ?? prev.pname,
+              modality: realModality || prev.modality,
+            }
+          : prev
+      );
+      const dlFiles = data.files ?? [];
+      if (dlFiles.length > 0) {
+        setHandoff({
+          open: true,
+          modality: realModality || null,
+          source: data.modalitySource ?? null,
+          pid: realPid,
+          pname: data.pname ?? data.patientName ?? study.pname,
+          studyKey: study.studyKey,
+          hashKey: study.hashKey,
+          files: dlFiles,
+        });
+      }
     } catch (e) {
       setFetchError({
         fa: e instanceof Error ? e.message.slice(0, 160) : "دانلود پکیج دایکام ناموفق بود.",
@@ -969,7 +1023,149 @@ function MedalConnected() {
     mammography: "ماموگرافی",
   };
 
+  /* ---- post-download module hand-off dialog (user choice) ---- */
+  const recommended = handoff?.modality
+    ? modalityToModule(handoff.modality)
+    : null;
+
+  const HANDOFF_OPTIONS: {
+    id: string;
+    fa: string;
+    desc: string;
+    icon: "bone" | "brain" | "box";
+  }[] = [
+    { id: "fracture", fa: "تشخیص شکستگی", desc: "YOLOv8 · گرافی ارتوپدی", icon: "bone" },
+    { id: "bone", fa: "تضعیف استخوان", desc: "Qure · بافت نرم قفسه سینه", icon: "bone" },
+    { id: "chest18", fa: "غربالگری ریوی", desc: "DenseNet-18 · ۱۸ پاتولوژی", icon: "brain" },
+    { id: "mammo", fa: "ماموگرافی", desc: "ResNet-50 · غربالگری", icon: "brain" },
+    { id: "studio", fa: "استودیوی سه‌بعدی CT", desc: "MPR + حجم‌سازی", icon: "box" },
+  ];
+
+  const openInModule = (moduleId: string) => {
+    if (!handoff || !info) return;
+    setPending({
+      sid: info.sid,
+      pid: handoff.pid,
+      pname: handoff.pname,
+      modality: handoff.modality ?? "",
+      studyKey: handoff.studyKey,
+      hashKey: handoff.hashKey,
+      files: handoff.files,
+    });
+    setHandoff(null);
+    /* module room reads the pending study — the dedicated workspace
+       opens via the pacs-study hand-off effect in workstation.tsx.
+       (moduleId is honoured as the recommended default through the
+       modality; the user picked it here.) */
+    void moduleId;
+  };
+
   return (
+    <>
+      {handoff?.open && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          dir="rtl"
+        >
+          <div className="max-h-[86vh] w-full max-w-md overflow-y-auto rounded-2xl border border-[#253548] bg-[#0f1a29] p-5 shadow-2xl">
+            <div className="mb-1 flex items-center gap-2.5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#a78bfa]/15 text-[#a78bfa]">
+                <ArrowUpRight className="h-4.5 w-4.5" aria-hidden="true" />
+              </span>
+              <div>
+                <h3 className="text-[15px] font-bold text-[#e8eef5]">
+                  مطالعه دریافت شد
+                </h3>
+                <p className="text-[11px] text-[#8fa3b8]">
+                  {handoff.pname ?? "بیمار رادیولوژی"} · {handoff.pid}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHandoff(null)}
+                className="mr-auto flex h-8 w-8 items-center justify-center rounded-lg border border-[#253548] text-[#8fa3b8] transition-colors hover:text-white"
+                aria-label="بستن"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl bg-[#141e2a] p-2.5 text-[11px]">
+              <span className="rounded-lg bg-[#223046] px-2.5 py-1 font-mono font-bold text-[#7ee7f3]">
+                {handoff.modality ?? "؟"}
+              </span>
+              <span className="text-[#8fa3b8]">
+                {handoff.source === "dicom"
+                  ? "تشخیص از متادیتای فایل‌های دایکام"
+                  : handoff.source === "page"
+                    ? "تشخیص از صفحه مطالعه PACS"
+                    : "نوع مطالعه"}
+              </span>
+              <span className="mr-auto text-[#4ade80]">
+                {handoff.files.length} فایل
+              </span>
+            </div>
+
+            <p className="mb-2.5 text-[12px] font-semibold text-[#e8eef5]">
+              در کدام ماژول باز شود؟
+            </p>
+            <div className="space-y-2">
+              {HANDOFF_OPTIONS.map((opt) => {
+                const isRec = recommended === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => openInModule(opt.id)}
+                    className={`flex w-full items-center gap-3 rounded-xl border p-3 text-right transition-all active:scale-[0.99] ${
+                      isRec
+                        ? "border-[#a78bfa]/60 bg-[#241d3a] shadow-[0_0_18px_rgba(167,139,250,0.15)]"
+                        : "border-[#253548] bg-[#141e2a] hover:border-[#3a5a7d]"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                        isRec
+                          ? "bg-[#a78bfa]/20 text-[#c4b5fd]"
+                          : "bg-[#223046] text-[#8fa3b8]"
+                      }`}
+                    >
+                      {opt.icon === "bone" ? (
+                        <Bone className="h-4.5 w-4.5" aria-hidden="true" />
+                      ) : opt.icon === "box" ? (
+                        <Box className="h-4.5 w-4.5" aria-hidden="true" />
+                      ) : (
+                        <Brain className="h-4.5 w-4.5" aria-hidden="true" />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[12.5px] font-bold text-[#e8eef5]">
+                        {opt.fa}
+                        {isRec && (
+                          <span className="mr-2 rounded-full bg-[#a78bfa]/20 px-2 py-0.5 text-[9px] font-bold text-[#c4b5fd]">
+                            پیشنهاد سیستم
+                          </span>
+                        )}
+                      </span>
+                      <span className="block text-[10px] text-[#8fa3b8]">
+                        {opt.desc}
+                      </span>
+                    </span>
+                    <ArrowUpRight className="h-4 w-4 shrink-0 text-[#5a6e82]" aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-3 text-center text-[10px] leading-relaxed text-[#5a6e82]">
+              مطالعه در نوار PACS همین ماژول‌ها نیز باقی می‌ماند و می‌توانید بعداً
+              ماژول دیگری را انتخاب کنید.
+            </p>
+          </div>
+        </div>
+      )}
+
     <div className="space-y-3">
       {/* session card */}
       <div className="rounded-xl border border-[#22c55e]/25 bg-[#12251c]/60 p-3">
@@ -1112,15 +1308,16 @@ function MedalConnected() {
           {/* files + AI */}
           {files && (
             <div className="space-y-2.5">
-              {/* open in the dedicated module room */}
+              {/* open in the dedicated module room (chooser dialog) */}
               <button
                 type="button"
                 onClick={() => {
-                  setPending({
-                    sid: info.sid,
+                  setHandoff({
+                    open: true,
+                    modality: study.modality || null,
+                    source: null,
                     pid: study.pid ?? "",
                     pname: study.pname,
-                    modality: study.modality,
                     studyKey: study.studyKey,
                     hashKey: study.hashKey,
                     files,
@@ -1130,7 +1327,8 @@ function MedalConnected() {
               >
                 <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
                 <span dir="rtl">
-                  باز کردن در {moduleLabelFa(modalityToModule(study.modality))}
+                  باز کردن در ماژول{" "}
+                  {study.modality ? `(${study.modality})` : ""}
                 </span>
               </button>
 
@@ -1299,6 +1497,7 @@ function MedalConnected() {
         </div>
       )}
     </div>
+    </>
   );
 }
 
@@ -1339,16 +1538,19 @@ function LocalArchive() {
   }, []);
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const res = await fetch("/api/pacs/status", { cache: "no-store" });
-        if (!res.ok) throw new Error();
-        setStatus(await res.json());
-      } catch {
-        setOffline(true);
-      }
-    })();
-    void loadStudies("");
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch("/api/pacs/status", { cache: "no-store" });
+          if (!res.ok) throw new Error();
+          setStatus(await res.json());
+        } catch {
+          setOffline(true);
+        }
+      })();
+      void loadStudies("");
+    }, 0);
+    return () => clearTimeout(t);
   }, [loadStudies]);
 
   const toggleStudy = useCallback(

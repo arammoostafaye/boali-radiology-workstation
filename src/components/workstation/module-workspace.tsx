@@ -21,7 +21,6 @@ import {
   Database,
   Droplets,
   FileWarning,
-  Grid3x3,
   Loader2,
   Minus,
   Play,
@@ -327,7 +326,7 @@ interface ShellProps {
   run: EngineRunState;
   onBack: () => void;
   onSwitchModule: (id: LauncherModuleId) => void;
-  onOpenWorkstation: () => void;
+  onOpenWorkstation?: () => void;
   children: React.ReactNode;
 }
 
@@ -467,14 +466,6 @@ function ModuleShell({ meta, run, onBack, onSwitchModule, onOpenWorkstation, chi
               ))}
             </>
           )}
-          <button
-            type="button"
-            onClick={onOpenWorkstation}
-            className="hidden h-8 items-center gap-1.5 rounded-xl border border-[#253548] bg-[#182430] px-2.5 text-[11px] font-medium text-[#8fa3b8] transition-colors hover:border-[#3a5a7d] hover:text-white lg:flex"
-          >
-            <Grid3x3 className="h-3 w-3" aria-hidden="true" />
-            Workstation
-          </button>
         </div>
       </header>
 
@@ -1887,7 +1878,7 @@ interface ModuleWorkspaceProps {
   moduleId: LauncherModuleId;
   onBack: () => void;
   onSwitchModule: (id: LauncherModuleId) => void;
-  onOpenWorkstation: () => void;
+  onOpenWorkstation?: () => void;
   onResult: (engineId: EngineId, result: EngineResult) => void;
   results: Partial<Record<EngineId, EngineResult>>;
   /** a study downloaded through the MedalPACS bridge, handed to its
@@ -2015,7 +2006,7 @@ export function ModuleWorkspace({
     []
   );
 
-  const pacsOpenAt = pacsStudy?.openAt;
+  const pacsOpenAt = pacsStudy?.openAt ?? null;
   /* stable callbacks only — the `run` object itself is rebuilt on every
    * render, so it must NOT be an effect dependency (the auto-run would
    * be cancelled by the re-render that loadPacsFiles triggers). */

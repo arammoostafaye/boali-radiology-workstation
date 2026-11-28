@@ -461,10 +461,18 @@ class MedalHandler(BaseHTTPRequestHandler):
             return
 
         if low.endswith("/default.aspx"):
+            sk_raw = (q.get("SK") or q.get("sk") or [""])[0]
+            sk = unquote_plus(sk_raw)
+            for cand in (sk, sk.replace(" ", "+")):
+                if cand in STUDIES:
+                    self._send(
+                        200, study_html(cand).encode("utf-8"), "text/html; charset=utf-8"
+                    )
+                    return
             self._send(200, default_html().encode("utf-8"), "text/html; charset=utf-8")
             return
 
-        if low.endswith("/process.aspx"):
+        if low.endswith(("/process.aspx", "/showstudy.aspx", "/imageviewer.aspx")):
             sk_raw = (q.get("SK") or q.get("sk") or [""])[0]
             sk = unquote_plus(sk_raw)
             # tolerate unencoded '+' arriving as spaces

@@ -143,11 +143,14 @@ export function RealEnginePanel({ activeEngineId, onEngineChange }: RealEnginePa
   /* follow external module selection — reset stale results so a result
    * from another engine never renders in the newly selected engine's UI */
   useEffect(() => {
-    if (activeEngineId && activeEngineId !== engineId) {
-      setEngineId(activeEngineId);
-      setResult(null);
-      setError(null);
-    }
+    const t = setTimeout(() => {
+      if (activeEngineId && activeEngineId !== engineId) {
+        setEngineId(activeEngineId);
+        setResult(null);
+        setError(null);
+      }
+    }, 0);
+    return () => clearTimeout(t);
   }, [activeEngineId, engineId]);
 
   /* reset result when switching engines */

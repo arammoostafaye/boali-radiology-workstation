@@ -64,6 +64,7 @@ jobs:
         run: |
           set -euxo pipefail
           REF="${GITHUB_REF_NAME:-v1.2.0}"
+          export REF
           NAME="Boali-Radiology-Workstation-${REF}-Windows-Portable"
           STAGE="dist-stage/Boali"
           mkdir -p "${STAGE}" dist
@@ -116,6 +117,37 @@ jobs:
           # ---- free runner disk before zipping ----
           rm -rf node_modules .next
 
+          # ---- version marker + delta-update manifest (in-app updater) ----
+          echo "${REF}" > "${STAGE}/VERSION"
+          python - <<'PYMAN'
+          import hashlib, json, os
+          stage = "dist-stage/Boali"
+          files = []
+          for root, dirs, names in os.walk(stage):
+              dirs[:] = [d for d in dirs if d not in (".update", "logs")]
+              for n in names:
+                  if n.endswith(".bak"):
+                      continue
+                  full = os.path.join(root, n)
+                  rel = os.path.relpath(full, stage).replace(os.sep, "/")
+                  h = hashlib.sha256()
+                  with open(full, "rb") as fh:
+                      for chunk in iter(lambda: fh.read(1 << 20), b""):
+                          h.update(chunk)
+                  files.append({
+                      "path": rel,
+                      "size": os.path.getsize(full),
+                      "sha256": h.hexdigest(),
+                  })
+          files.sort(key=lambda f: f["path"])
+          with open(os.path.join(stage, ".update-manifest.json"), "w") as fh:
+              json.dump({"tag": os.environ.get("REF", ""), "files": files}, fh)
+          # the manifest also ships as a release asset for /api/update/check
+          with open("dist/manifest.json", "w") as fh:
+              fh.write(json.dumps({"tag": os.environ.get("REF", ""), "files": files}))
+          print("manifest: %d files" % len(files))
+          PYMAN
+
           # ---- zip it up (short top folder "Boali" = safe path lengths) ----
           ( cd dist-stage && zip -r -q -9 "${GITHUB_WORKSPACE}/dist/${NAME}.zip" Boali )
           cd dist
@@ -133,5 +165,6 @@ jobs:
           files: |
             dist/*.zip
             dist/SHA256SUMS.txt
+            dist/manifest.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

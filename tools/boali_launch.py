@@ -181,13 +181,16 @@ def main() -> int:
     if os.path.exists(os.path.join(webapp_dir, "server.js")):
         web_cmd = [args.nodeexe, "server.js"]
         web_cwd = webapp_dir
-        web_env = {"PORT": str(WEB_PORT), "HOSTNAME": "127.0.0.1"}
+        # BOALI_ROOT tells /api/update/* where the package root is
+        # (cwd is webapp/, but manifest paths are relative to the root)
+        web_env = {"PORT": str(WEB_PORT), "HOSTNAME": "127.0.0.1",
+                   "BOALI_ROOT": root}
     else:
         web_cmd = [args.nodeexe,
                    os.path.join("node_modules", "next", "dist", "bin", "next"),
                    "dev", "-p", str(WEB_PORT), "--webpack"]
         web_cwd = root
-        web_env = {}
+        web_env = {"BOALI_ROOT": root}
     services.append(
         ("web", web_cmd, web_cwd, web_env, WEB_PORT, os.path.join(logs_dir, "web.log"))
     )

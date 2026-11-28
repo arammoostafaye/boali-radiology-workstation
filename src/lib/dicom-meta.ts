@@ -192,14 +192,17 @@ export function readDicomMeta(input: Buffer): DicomMeta | null {
 
     /* skip undefined-length sequences conservatively */
     if (info.length === 0xffffffff) {
-      /* sequence with undefined length — scan for item delimiters is
+      /* sequence with undefined length — scanning for item delimiters is
          overkill for our tags; bail out of the sequence by scanning
          for the next plausible tag boundary is unreliable → stop. */
       break;
     }
 
-    pos = dataStart + info.length;
-    if (pos <= dataStart) break;
+    const nextPos = dataStart + info.length;
+    /* only stop if the cursor did not move at all (corrupt header) —
+       zero-LENGTH elements are perfectly legal and must not stop us */
+    if (nextPos <= pos) break;
+    pos = nextPos;
   }
 
   const hasSomething =

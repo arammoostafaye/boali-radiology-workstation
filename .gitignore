@@ -100,3 +100,6 @@ runtime/node/
 runtime/tmp/
 # Boali service logs + pid records (written by tools/boali_launch.py at runtime)
 /logs/
+
+# in-app updater runtime state
+/.update/

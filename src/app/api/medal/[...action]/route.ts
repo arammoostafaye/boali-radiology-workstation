@@ -33,7 +33,9 @@ import {
   discoverLogin,
   dropSession,
   extractNames,
+  downloadStudyPackage,
   extractZip,
+  fetchStudyPage,
   follow,
   getSession,
   jfetch,
@@ -629,6 +631,14 @@ export async function POST(
         if (!targets.includes(u)) targets.push(u);
       };
 
+      /* the working desktop engine's endpoints FIRST (ShowStudy →
+       * Default → ImageViewer), then the previous bridge candidates */
+      for (const v of [skPlus, skQuoted]) {
+        push(`${base}/MedalWeb/ShowStudy.aspx?SK=${v}`);
+        push(`${base}/MedalWeb/Default.aspx?SK=${v}`);
+        push(`${base}/MedalWeb/ImageViewer.aspx?SK=${v}`);
+      }
+
       if (parsed.patientId) {
         push(`${base}/MedalWeb/Process.aspx?ID=${parsed.patientId}`);
         push(`${base}/MedalWeb/viewer.aspx?ID=${parsed.patientId}&Ser=1`);
@@ -731,6 +741,9 @@ export async function POST(
     }
 
     /* ---------------- DICOM package download ------------------------- */
+    /* faithful port of the working desktop MedalDicomDownloader:
+     * visit the study page first (session state + real HashKey +
+     * Referer), then Download.aspx with mode="1". */
     if (head === "download") {
       const body = (await req.json().catch(() => ({}))) as {
         sid?: string;
@@ -738,17 +751,19 @@ export async function POST(
         studyKey?: string;
         hashKey?: string;
         pname?: string;
-        mode?: number;
+        mode?: string | number;
       };
       const s = await getSession(body.sid ?? null);
       if (!s) return json({ error: "Unknown or expired bridge session." }, 404);
       if (!s.connected)
         return json({ error: "Not connected — sign in first." }, 401);
 
-      const pid = (body.pid ?? "").trim().slice(0, 64);
+      let pid = (body.pid ?? "").trim().slice(0, 64);
       const studyKey = (body.studyKey ?? "").trim().slice(0, 200);
-      const hashKey = (body.hashKey ?? studyKey).trim().slice(0, 200);
-      const mode = Number.isFinite(body.mode) ? Number(body.mode) : 0;
+      let hashKey = (body.hashKey ?? studyKey).trim().slice(0, 200);
+      /* the working desktop engine's default mode is "1" */
+      const mode = body.mode != null ? String(body.mode).slice(0, 8) : "1";
+      let pname = body.pname?.trim().slice(0, 120) ?? null;
       if (!pid || !studyKey) {
         return json(
           {
@@ -759,68 +774,89 @@ export async function POST(
         );
       }
 
+      const base = s.appBase;
+
+      /* ---- helper: real modality straight from the DICOM headers ---- */
+      const detectFromFiles = async (
+        dirPid: string,
+        files: { name: string; size: number }[]
+      ) => {
+        const { detectStudy } = await import("@/lib/dicom-meta");
+        return detectStudy(files, async (name) => {
+          const p = await resolveCachedDicom(dirPid, name);
+          if (!p) return null;
+          try {
+            return await fs.readFile(p);
+          } catch {
+            return null;
+          }
+        });
+      };
+
       const dir = studyDir(pid);
 
       /* fast path — already downloaded (desktop app behaviour) */
       const existing = await catalogDicom(dir);
       if (existing.length > 0) {
+        const det = await detectFromFiles(pid, existing);
         return json({
           ok: true,
           cached: true,
           pid,
+          pname,
           files: existing,
           count: existing.length,
+          modality: det.modality ?? null,
+          modalitySource: det.modality ? "dicom" : null,
         });
       }
 
-      const base = s.appBase;
-      const candidates = [
-        `${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(hashKey)}&PID=${encodeURIComponent(pid)}&mode=${mode}`,
-        `${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(studyKey)}&PID=${encodeURIComponent(pid)}&mode=${mode}`,
-        `${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(hashKey)}&mode=${mode}`,
-        `${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(studyKey)}&mode=${mode}`,
-        `${base}/MedalWeb/Download.aspx?SK=${encodeURIComponent(hashKey)}`,
-      ];
-
-      await fs.mkdir(CACHE_ROOT, { recursive: true });
-      const zipPath = path.join(CACHE_ROOT, `study_${safePid(pid)}.zip`);
-      let downloaded = false;
-
-      for (const dl of candidates) {
-        try {
-          await streamToFile(s.cookies, dl, `${base}/MedalWeb/Process.aspx`, zipPath);
-          const head = await readFileHead(zipPath, 4);
-          if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4b) {
-            downloaded = true;
-            break;
-          }
-          /* server answered with a page naming the real zip */
-          const txt = (await fs.readFile(zipPath, "utf8")).slice(0, 4096);
-          const zm = txt.match(/([A-Za-z0-9_\-]+\.zip)/i);
-          if (zm) {
-            const tempUrl = `${base}/MedalWeb/temp/${zm[1]}`;
-            await streamToFile(
-              s.cookies,
-              tempUrl,
-              `${base}/MedalWeb/Process.aspx`,
-              zipPath
-            );
-            const h2 = await readFileHead(zipPath, 4);
-            if (h2.length >= 4 && h2[0] === 0x50 && h2[1] === 0x4b) {
-              downloaded = true;
-              break;
-            }
-          }
-        } catch {
-          continue;
-        }
+      /* ---- step 1: visit the study page (old-app endpoint order) ---- */
+      let page = await fetchStudyPage(s.cookies, base, hashKey || studyKey);
+      if (!page) page = await fetchStudyPage(s.cookies, base, studyKey);
+      let pageUrl = page?.finalUrl ?? null;
+      let pageModality: string | null = null;
+      if (page) {
+        const meta = parseStudyPage(page.html, page.finalUrl, base, studyKey);
+        if (meta.hashKey) hashKey = meta.hashKey;
+        if (meta.pid) pid = meta.pid;
+        pageModality = (meta.modality ?? "").toUpperCase() || null;
+        if (meta.pname) pname = meta.pname;
+      }
+      if (!pageUrl) {
+        /* last resort referer — the old app always sent the study page */
+        pageUrl = `${base}/MedalWeb/Process.aspx?SK=${encodeURIComponent(studyKey)}`;
       }
 
-      if (!downloaded) {
+      /* ---- step 2: download the package ---- */
+      await fs.mkdir(CACHE_ROOT, { recursive: true });
+      const zipPath = path.join(CACHE_ROOT, `study_${safePid(pid)}.zip`);
+      const dl = await downloadStudyPackage(s.cookies, base, {
+        pid,
+        studyKey,
+        hashKey,
+        pageUrl,
+        mode,
+        zipPath,
+      });
+
+      if (!dl.ok) {
+        const tried = dl.attempts
+          .map(
+            (a) =>
+              `${a.url.replace(base, "").replace("/MedalWeb/", "")} → ${
+                a.error ?? a.status
+              }`
+          )
+          .slice(0, 5)
+          .join(" | ");
         return json(
           {
-            errorFa: "پکیج دایکام بیمار از سرور پکس دریافت نشد.",
+            errorFa:
+              "پکیج دایکام بیمار از سرور پکس دریافت نشد." +
+              (tried ? ` تلاش‌ها: ${tried.slice(0, 220)}` : ""),
             error: "The DICOM package could not be downloaded from the PACS.",
+            attempts: dl.attempts,
           },
           502
         );
@@ -837,7 +873,22 @@ export async function POST(
           502
         );
       }
-      return json({ ok: true, pid, files, count: files.length });
+
+      /* ---- step 3: real modality from the actual DICOM headers ---- */
+      const det = await detectFromFiles(pid, files);
+      const modality = det.modality ?? pageModality;
+
+      return json({
+        ok: true,
+        pid,
+        pname: det.patientName ?? pname,
+        files,
+        count: files.length,
+        modality,
+        modalitySource: det.modality ? "dicom" : pageModality ? "page" : null,
+        patientName: det.patientName ?? null,
+        studyDescription: det.studyDescription ?? null,
+      });
     }
 
     return json({ error: `Unknown medal bridge action: ${head}` }, 404);
